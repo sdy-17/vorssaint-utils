@@ -1,3 +1,8 @@
+> [!NOTE]
+> This is a personal development fork with additional display configuration and
+> in-place screenshot editing. See [the fork notes](README.local.md) for scope,
+> build instructions and validation. The upstream project documentation follows.
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/logo-dark.svg">
