@@ -43,6 +43,7 @@ struct MetricsTests {
             }),
             ("linear-scroll", { LinearScrollTapTests.run(suite) }),
             ("preferences", { PreferencesFeatureTests.run(suite) }),
+            ("display-configuration", { DisplayConfigurationTests.run(suite) }),
             ("app-management", {
                 AppManagementFeatureTests.run(suite)
                 DiskImageHomebrewTests.run(suite)

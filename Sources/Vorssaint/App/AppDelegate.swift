@@ -222,6 +222,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         let skipStartupWindows = startupOfPreviousRunDidNotFinish
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            if CommandLine.arguments.contains("--display-settings"), AppFeature.brightness.isAvailable {
+                SettingsRouter.shared.request(AppFeature.brightness.settingsDestination)
+                self.openSettingsWindow()
+                return
+            }
             #if VORSSAINT_DEVELOPMENT
             if CommandLine.arguments.contains("--preview-notch-tour") {
                 self.showUpdateHighlights(isReview: true)
