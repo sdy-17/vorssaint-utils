@@ -633,7 +633,6 @@ final class ScreenshotService: ObservableObject {
     }
 
     func openEditor(with capture: ScreenshotSelectionController.Capture) {
-        WindowActivationPolicy.retain()
         // Any editor may be showing the latest capture, and what it exports
         // is no longer the stored original, so the shortcut keeps that
         // original back until a newer capture arrives.
@@ -798,7 +797,6 @@ final class ScreenshotService: ObservableObject {
     func editorDidClose(_ editor: ScreenshotEditorController) {
         guard editors.contains(where: { $0 === editor }) else { return }
         editors.removeAll { $0 === editor }
-        WindowActivationPolicy.release()
     }
 
     /// Automatic copy stays quiet on success: the preview or the editor is

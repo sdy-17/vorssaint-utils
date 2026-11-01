@@ -1062,6 +1062,77 @@ enum ScreenshotSupport {
 
     // MARK: - Editor layout
 
+    /// Screen-local, top-left coordinates. Source pixels stay at their
+    /// original point size; only an edited image larger than the display fits.
+    static func inPlaceSelectionFrame(anchor: CGRect, screenFrame: CGRect,
+                                      imagePointSize: CGSize) -> CGRect {
+        let fit = min(1, screenFrame.width / max(1, imagePointSize.width),
+                      screenFrame.height / max(1, imagePointSize.height))
+        let size = CGSize(width: imagePointSize.width * fit,
+                          height: imagePointSize.height * fit)
+        return CGRect(x: min(max(0, anchor.minX - screenFrame.minX), screenFrame.width - size.width),
+                      y: min(max(0, screenFrame.maxY - anchor.maxY), screenFrame.height - size.height),
+                      width: size.width, height: size.height)
+    }
+
+    /// Prefer the space below the selected area, then above it. Full-screen
+    /// captures keep the toolbar inside the screen, never beyond its edges.
+    static func inPlaceToolbarFrame(selection: CGRect, screenSize: CGSize,
+                                    toolbarSize: CGSize, topInset: CGFloat) -> CGRect {
+        let margin: CGFloat = 12
+        let gap: CGFloat = 10
+        let top = max(margin, topInset + 4)
+        let size = CGSize(width: min(toolbarSize.width, max(1, screenSize.width - margin * 2)),
+                          height: min(toolbarSize.height, max(1, screenSize.height - top - margin)))
+        let bottom = screenSize.height - margin - size.height
+        let desiredY: CGFloat
+        if selection.maxY + gap <= bottom {
+            desiredY = selection.maxY + gap
+        } else if selection.minY - gap - size.height >= top {
+            desiredY = selection.minY - gap - size.height
+        } else {
+            desiredY = bottom
+        }
+        return CGRect(x: min(max(margin, selection.maxX - size.width),
+                             screenSize.width - margin - size.width),
+                      y: min(max(top, desiredY), bottom), width: size.width, height: size.height)
+    }
+
+    /// Resizing the screenshot selection keeps the opposite edge fixed and
+    /// stops at the original display bounds. Coordinates are source pixels.
+    static func resizedSourceSelection(_ rect: CGRect, handle: Handle,
+                                        to point: CGPoint, sourceSize: CGSize) -> CGRect {
+        let minimum: CGFloat = 8
+        var x = point.x, y = point.y
+        switch handle {
+        case .topLeft, .left, .bottomLeft:
+            x = min(max(0, x), rect.maxX - minimum)
+        case .topRight, .right, .bottomRight:
+            x = max(min(sourceSize.width, x), rect.minX + minimum)
+        default: break
+        }
+        switch handle {
+        case .topLeft, .top, .topRight:
+            y = min(max(0, y), rect.maxY - minimum)
+        case .bottomLeft, .bottom, .bottomRight:
+            y = max(min(sourceSize.height, y), rect.minY + minimum)
+        default: break
+        }
+        return pixelSnappedCropRect(resizedRect(rect, dragging: handle, to: CGPoint(x: x, y: y)),
+                                   within: CGRect(origin: .zero, size: sourceSize))
+    }
+
+    static func inPlaceToolbarWidth(toolCount: Int, screenWidth: CGFloat) -> CGFloat {
+        // Each tool is 33 points with a 2-point gap; the actions use 240.
+        min(max(420, CGFloat(toolCount) * 35 + 240), max(1, screenWidth - 24))
+    }
+
+    static func needsTextRecognition(tool: Tool, blurTextOnly: Bool,
+                                      annotations: [Annotation]) -> Bool {
+        tool == .select || (tool == .pixelate && blurTextOnly)
+            || annotations.contains { $0.tool == .pixelate && $0.blurTextOnly }
+    }
+
     /// A fresh editor should be large enough for its controls and canvas,
     /// while still fitting compact or rotated displays.
     static func editorMinimumContentSize(visibleSize: CGSize) -> CGSize {

@@ -10,7 +10,17 @@ import Vision
 /// document (image, annotations, undo history) and the export paths. The
 /// SwiftUI editor view observes this model; geometry is in image pixels.
 final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
-    @Published private(set) var baseImage: CGImage
+    @Published private(set) var baseImage: CGImage {
+        didSet {
+            recognizedTextImage = nil
+            recognizingTextImage = nil
+        }
+    }
+    var usesOnDemandRecognition = false
+    private var recognizedTextImage: ObjectIdentifier?
+    private var recognizingTextImage: ObjectIdentifier?
+    /// Selection in pixels of the original frozen display, independent of annotations.
+    @Published var sourceSelectionRect: CGRect?
     @Published var annotations: [ScreenshotSupport.Annotation] = []
     /// How dark a spotlight turns everything outside its regions,
     /// remembered between captures like the blur strength.
@@ -45,6 +55,7 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
                 cropDraft = nil
                 cropLoupePoint = nil
             }
+            if usesOnDemandRecognition, tool != oldValue { recognizeText() }
         }
     }
     /// Words recognized in the capture and selectable with the select tool.
@@ -94,6 +105,7 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         didSet {
             UserDefaults.standard.set(blurTextOnly, forKey: DefaultsKey.screenshotLastBlurTextOnly)
             applyBlurToSelection()
+            if usesOnDemandRecognition { recognizeText() }
         }
     }
     @Published var arrowStyle: ScreenshotSupport.ArrowStyleID {
@@ -192,8 +204,8 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
                                        imageLayerCache: imageLayerCache)
     }
 
-    private var undoStack: [(image: CGImage, annotations: [ScreenshotSupport.Annotation])] = []
-    private var redoStack: [(image: CGImage, annotations: [ScreenshotSupport.Annotation])] = []
+    private var undoStack: [(image: CGImage, annotations: [ScreenshotSupport.Annotation], sourceRect: CGRect?)] = []
+    private var redoStack: [(image: CGImage, annotations: [ScreenshotSupport.Annotation], sourceRect: CGRect?)] = []
     private static let undoLimit = 60
     private var cleanImage: CGImage?
     private var cleanAnnotations: [ScreenshotSupport.Annotation] = []
@@ -441,7 +453,13 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
     /// Word-level recognition of the base capture, off the main thread; the
     /// boxes land in image pixels with their line index.
     func recognizeText() {
+        guard !usesOnDemandRecognition || ScreenshotSupport.needsTextRecognition(
+            tool: tool, blurTextOnly: blurTextOnly, annotations: annotations) else { return }
         let image = baseImage
+        let identity = ObjectIdentifier(image)
+        guard recognizingTextImage != identity,
+              recognizedTextImage != identity || textRuns == nil else { return }
+        recognizingTextImage = identity
         let width = CGFloat(image.width)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let tiles = ScreenshotSupport.recognitionTiles(width: image.width, height: image.height)
@@ -504,6 +522,8 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
             let merged = ScreenshotSupport.mergedRecognition(reads, tiles: tiles)
             DispatchQueue.main.async { [weak self] in
                 guard let self, image === self.baseImage else { return }
+                self.recognizingTextImage = nil
+                self.recognizedTextImage = identity
                 self.textWords = merged.words
                 self.textRuns = merged.runs.map { $0 + (self.carriedRuns[ObjectIdentifier(image)] ?? []) }
             }
@@ -514,6 +534,8 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
     /// the copy or open action in the toolbar. Re-run whenever the base image
     /// changes (crop, undo) so a cropped out code stops being offered.
     func recognizeQRCodes() {
+        // The in-place strip has no QR action. The full editor still scans.
+        guard !usesOnDemandRecognition else { return }
         let image = baseImage
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let current = self, image === current.baseImage else { return }
@@ -603,10 +625,49 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         return true
     }
 
+    /// Re-read the original desktop, rather than scaling the old crop. Marks
+    /// keep their desktop coordinates as the selection's top/left edge moves.
+    @discardableResult
+    func resizeSourceSelection(to rect: CGRect, from sourceImage: CGImage) -> Bool {
+        guard let old = sourceSelectionRect else { return false }
+        let bounds = CGRect(x: 0, y: 0, width: sourceImage.width, height: sourceImage.height)
+        let snapped = ScreenshotSupport.pixelSnappedCropRect(rect, within: bounds)
+        guard snapped.width >= 8, snapped.height >= 8, snapped != old,
+              let cropped = sourceImage.cropping(to: snapped) else { return false }
+        registerUndo()
+        let delta = CGPoint(x: old.minX - snapped.minX, y: old.minY - snapped.minY)
+        let referenceSize = imageSize
+        annotations = annotations.map { annotation in
+            var moved = annotation
+            moved.rect = moved.rect.offsetBy(dx: delta.x, dy: delta.y)
+            moved.points = moved.points.map { CGPoint(x: $0.x + delta.x, y: $0.y + delta.y) }
+            if moved.tool == .counter || moved.tool == .pixelate {
+                moved.renderReferenceSize = moved.renderReferenceSize ?? referenceSize
+            }
+            return moved
+        }
+        baseImage = cropped
+        sourceSelectionRect = snapped
+        pixelated = [:]
+        softBlurred = [:]
+        textRuns = nil
+        textWords = []
+        clearTextSelection()
+        selectedID = nil
+        editingTextID = nil
+        cropDraft = tool == .crop ? CGRect(origin: .zero, size: imageSize) : nil
+        pruneCarriedRuns()
+        ensureBlurSamplesForAnnotations()
+        recognizeText()
+        recognizeQRCodes()
+        refreshDirtyState()
+        return true
+    }
+
     // MARK: - Undo
 
     private func registerUndo() {
-        undoStack.append((baseImage, annotations))
+        undoStack.append((baseImage, annotations, sourceSelectionRect))
         if undoStack.count > Self.undoLimit {
             undoStack.removeFirst()
         }
@@ -617,13 +678,13 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
 
     func undo() {
         guard let last = undoStack.popLast() else { return }
-        redoStack.append((baseImage, annotations))
+        redoStack.append((baseImage, annotations, sourceSelectionRect))
         restore(last)
     }
 
     func redo() {
         guard let next = redoStack.popLast() else { return }
-        undoStack.append((baseImage, annotations))
+        undoStack.append((baseImage, annotations, sourceSelectionRect))
         restore(next)
     }
 
@@ -633,8 +694,9 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         carriedRuns = carriedRuns.filter { live.contains($0.key) }
     }
 
-    private func restore(_ state: (image: CGImage, annotations: [ScreenshotSupport.Annotation])) {
+    private func restore(_ state: (image: CGImage, annotations: [ScreenshotSupport.Annotation], sourceRect: CGRect?)) {
         cancelCanvasExpansion()
+        sourceSelectionRect = state.sourceRect
         if state.image !== baseImage {
             baseImage = state.image
             pixelated = [:]
@@ -1282,6 +1344,10 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         }
         registerUndo()
         let previousImage = baseImage
+        if let source = sourceSelectionRect {
+            sourceSelectionRect = CGRect(x: source.minX + cropRect.minX, y: source.minY + cropRect.minY,
+                                         width: cropRect.width, height: cropRect.height)
+        }
         baseImage = cropped
         pixelated = [:]
         softBlurred = [:]
@@ -1374,6 +1440,11 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
 /// effect: clipboard, files, pins, text recognition and the close-confirm.
 final class ScreenshotEditorController: NSObject, NSWindowDelegate {
     let model: ScreenshotEditorModel
+    private let capture: ScreenshotSelectionController.Capture
+    private var displayObserver: NSObjectProtocol?
+    private var isInPlaceEditor = false
+    private var retainsActivation = false
+    private var retainsEditingCursor = false
     private var window: NSWindow?
     private var keyMonitor: Any?
     private var scrollMonitor: Any?
@@ -1388,11 +1459,35 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
     }
 
     init(capture: ScreenshotSelectionController.Capture) {
+        self.capture = capture
         model = ScreenshotEditorModel(image: capture.image, scale: capture.scale)
         super.init()
+        if let context = capture.editingContext {
+            let sourceScale = CGFloat(context.image.width) / context.screenFrame.width
+            let pixels = CGRect(x: (capture.anchorRect.minX - context.screenFrame.minX) * sourceScale,
+                                y: (context.screenFrame.maxY - capture.anchorRect.maxY) * sourceScale,
+                                width: capture.anchorRect.width * sourceScale,
+                                height: capture.anchorRect.height * sourceScale)
+            if abs(pixels.width - CGFloat(capture.image.width)) <= 1,
+               abs(pixels.height - CGFloat(capture.image.height)) <= 1 {
+                model.sourceSelectionRect = CGRect(x: pixels.minX.rounded(), y: pixels.minY.rounded(),
+                                                   width: CGFloat(capture.image.width), height: CGFloat(capture.image.height))
+            }
+        }
     }
 
     func show() {
+        if let context = capture.editingContext, !model.showsBackdrop,
+           NSScreen.screens.contains(where: { $0.frame == context.screenFrame }) {
+            showInPlace(context)
+            return
+        }
+        isInPlaceEditor = false
+        model.usesOnDemandRecognition = false
+        if !retainsActivation {
+            WindowActivationPolicy.retain()
+            retainsActivation = true
+        }
         let screen = NSScreen.pointerVisibleFrame
         let minimumSize = ScreenshotSupport.editorMinimumContentSize(visibleSize: screen.size)
         // The hosting view rewrites the window's size limits on its first
@@ -1434,6 +1529,71 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
         // Let the window appear before starting competing Vision workloads.
         DispatchQueue.main.async { [weak self] in
             guard let self, self.window?.isVisible == true else { return }
+            self.model.recognizeText()
+            self.model.recognizeQRCodes()
+        }
+    }
+
+    /// Keeps the captured pixels in the same desktop position. The desktop
+    /// still is display-only: exports continue through the existing renderer.
+    private func showInPlace(_ context: ScreenshotSelectionController.EditingContext) {
+        isInPlaceEditor = true
+        model.usesOnDemandRecognition = true
+        if !retainsEditingCursor {
+            ScreenshotSelectionController.retainEditingCursor()
+            retainsEditingCursor = true
+        }
+        let reused = capture.editingSurface?.claim()
+        let backdropContainer = reused?.contentView
+        let host = NSHostingView(rootView: ScreenshotEditorView(
+            model: model, controller: self, inPlaceContext: context,
+            selectionAnchor: capture.anchorRect, usesExternalBackdrop: backdropContainer != nil))
+        host.sizingOptions = []
+        let panel = reused ?? ScreenshotInPlaceEditorPanel(contentRect: context.screenFrame,
+                                                          styleMask: [.borderless, .nonactivatingPanel],
+                                                          backing: .buffered, defer: false)
+        panel.appearance = NSAppearance(named: .darkAqua)
+        if let container = backdropContainer {
+            host.frame = container.bounds
+            host.autoresizingMask = [.width, .height]
+            container.addSubview(host)
+        } else {
+            panel.contentView = host
+        }
+        panel.isReleasedWhenClosed = false
+        panel.isOpaque = true
+        panel.backgroundColor = .black
+        panel.hasShadow = false
+        panel.hidesOnDeactivate = false
+        panel.animationBehavior = .none
+        if reused == nil {
+            panel.level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()))
+            panel.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace, .ignoresCycle]
+        }
+        panel.delegate = self
+        panel.setFrame(context.screenFrame, display: false)
+        window = panel
+        installKeyMonitor()
+        // A non-activating key panel keeps keyboard/text editing without
+        // promoting a menu-bar app into the Dock or activating another scene.
+        panel.ignoresMouseEvents = false
+        if !panel.isVisible || !panel.isKeyWindow { panel.makeKeyAndOrderFront(nil) }
+        displayObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil, queue: .main) { [weak self] _ in
+                guard let self,
+                      !NSScreen.screens.contains(where: { $0.frame == context.screenFrame }) else { return }
+                // Keep annotations when a monitor is removed or its mode is
+                // changed; release the shield before returning to a window.
+                self.window?.orderOut(nil)
+                self.window?.delegate = nil
+                self.window?.close()
+                self.window = nil
+                self.removeEditorMonitors()
+                self.show()
+            }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self, weak panel] in
+            guard let self, let panel, self.window === panel, panel.isVisible else { return }
             self.model.recognizeText()
             self.model.recognizeQRCodes()
         }
@@ -1528,6 +1688,7 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
             keyCode: Int64(key), modifiers: GlobalShortcutModifiers(eventFlags: flags),
             number: number, orderRaw: orderRaw, bindingsRaw: bindingsRaw, enabled: enabled,
             capsLockOn: flags.contains(.capsLock)) {
+            if isInPlaceEditor, tool == .expandCanvas { return true }
             model.tool = tool
             return true
         }
@@ -1588,6 +1749,8 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
                 model.clearTextSelection()
             } else if model.selectedID != nil {
                 model.selectedID = nil
+            } else if isInPlaceEditor {
+                discardAndClose()
             } else {
                 window?.performClose(nil)
             }
@@ -1842,10 +2005,33 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
         alert.addButton(withTitle: strings.discardConfirm)
         alert.addButton(withTitle: strings.cancel)
         alert.alertStyle = .warning
+        if isInPlaceEditor {
+            alert.window.level = NSWindow.Level(rawValue: sender.level.rawValue + 1)
+        }
         return alert.runModal() == .alertFirstButtonReturn
     }
 
     func windowWillClose(_ notification: Notification) {
+        removeEditorMonitors()
+        window?.delegate = nil
+        window?.contentView = nil
+        window = nil
+        if retainsActivation {
+            WindowActivationPolicy.release()
+            retainsActivation = false
+        }
+        ScreenshotService.shared.editorDidClose(self)
+    }
+
+    private func removeEditorMonitors() {
+        if retainsEditingCursor {
+            ScreenshotSelectionController.releaseEditingCursor()
+            retainsEditingCursor = false
+        }
+        if let displayObserver {
+            NotificationCenter.default.removeObserver(displayObserver)
+            self.displayObserver = nil
+        }
         if let pointerMonitor {
             NSEvent.removeMonitor(pointerMonitor)
             self.pointerMonitor = nil
@@ -1858,8 +2044,10 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
             NSEvent.removeMonitor(keyMonitor)
             self.keyMonitor = nil
         }
-        window?.delegate = nil
-        window = nil
-        ScreenshotService.shared.editorDidClose(self)
     }
+}
+
+private final class ScreenshotInPlaceEditorPanel: OverlayPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
 }

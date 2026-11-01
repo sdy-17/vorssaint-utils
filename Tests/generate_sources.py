@@ -237,7 +237,7 @@ def main():
     write("ScreenshotCanvasModel.swift",
           "import AppKit\nextension ScreenshotCanvasModelTests {\nfinal class Host: Fixture {\n"
           + "".join(declaration(editor, prefix) for prefix in [
-              "    func pasteImage(", "    func commitCanvasExpansion(",
+              "    func pasteImage(", "    func commitCanvasExpansion(", "    func resizeSourceSelection(",
               "    private func registerUndo()", "    func undo()", "    func redo()",
               "    private func restore(", "    private func refreshUndoFlags()",
               "    func cancelCanvasExpansion()", "    func leaveCanvasExpansion()", "    func hitTest("])
@@ -1918,6 +1918,9 @@ def main():
           + declaration(editor_view, "    private func updateHoverCursor(").replace("private func", "func", 1)
           + "}\n}\n")
     selection = "Sources/Vorssaint/Services/QuickTools/ScreenshotSelectionController.swift"
+    write("ScreenshotEditingSurface.swift",
+          "import Foundation\nextension ScreenshotEditingSurfaceTests {\n"
+          + declaration(selection, "    final class EditingSurface") + "}\n")
     refresh_methods = [
         "    private func screenCaptureToolDidChange()",
         "    private func adoptCapturePolicy(",

@@ -14,6 +14,59 @@ import VMStatisticsCompat
 
 enum ScreenshotFeatureTests {
     static func run(_ suite: TestSuite) {
+        for tool in [ScreenshotSupport.Tool.sticker, .arrow, .rect, .text, .crop] {
+            suite.expect(!ScreenshotSupport.needsTextRecognition(
+                tool: tool, blurTextOnly: false, annotations: []),
+                         "ordinary annotation tools do not start recognition")
+        }
+        suite.expect(ScreenshotSupport.needsTextRecognition(
+            tool: .select, blurTextOnly: false, annotations: []),
+                     "selecting text requests recognition")
+        suite.expect(ScreenshotSupport.needsTextRecognition(
+            tool: .pixelate, blurTextOnly: true, annotations: []),
+                     "text-only blur requests recognition")
+        let textBlur = ScreenshotSupport.Annotation(tool: .pixelate, blurTextOnly: true)
+        suite.expect(ScreenshotSupport.needsTextRecognition(
+            tool: .arrow, blurTextOnly: false, annotations: [textBlur]),
+                     "existing text-only redaction keeps recognition available after resizing")
+        // A HiDPI screen left of and above the main screen must preserve
+        // the selection in points, without applying the pixel scale twice.
+        let sourceScreen = CGRect(x: -1920, y: 200, width: 1920, height: 1080)
+        let sourceArea = CGRect(x: -1800, y: 580, width: 856, height: 471)
+        let inlineArea = ScreenshotSupport.inPlaceSelectionFrame(
+            anchor: sourceArea, screenFrame: sourceScreen, imagePointSize: sourceArea.size)
+        suite.expect(inlineArea == CGRect(x: 120, y: 229, width: 856, height: 471),
+                     "in-place editor preserves selection on an offset HiDPI display")
+        for area in [inlineArea, CGRect(x: 0, y: 0, width: 1920, height: 1080),
+                     CGRect(x: 1800, y: 1000, width: 120, height: 80)] {
+            let bar = ScreenshotSupport.inPlaceToolbarFrame(
+                selection: area, screenSize: sourceScreen.size,
+                toolbarSize: CGSize(width: 940, height: 104), topInset: 32)
+            suite.expect(CGRect(origin: .zero, size: sourceScreen.size).contains(bar)
+                            && bar.minY >= 36,
+                         "in-place toolbar stays on screen below menu bar")
+        }
+        let above = ScreenshotSupport.inPlaceToolbarFrame(
+            selection: CGRect(x: 200, y: 700, width: 800, height: 350),
+            screenSize: sourceScreen.size, toolbarSize: CGSize(width: 940, height: 104), topInset: 32)
+        suite.expect(above.maxY < 700, "bottom-edge selection places its toolbar above")
+        let sourceBounds = CGSize(width: 1920, height: 1080)
+        let resizable = CGRect(x: 120, y: 200, width: 856, height: 471)
+        for handle in ScreenshotSupport.Handle.allCases {
+            let grown = ScreenshotSupport.resizedSourceSelection(
+                resizable, handle: handle, to: CGPoint(x: -1000, y: 4000), sourceSize: sourceBounds)
+            suite.expect(CGRect(origin: .zero, size: sourceBounds).contains(grown)
+                            && grown.width >= 8 && grown.height >= 8,
+                         "selection grip clamps to display and cannot cross the opposite edge")
+        }
+        suite.expect(ScreenshotSupport.resizedSourceSelection(
+            resizable, handle: .topLeft, to: CGPoint(x: 100, y: 180), sourceSize: sourceBounds)
+                == CGRect(x: 100, y: 180, width: 876, height: 491),
+                     "top-left resize leaves the opposite corner fixed")
+        suite.expect(ScreenshotSupport.inPlaceToolbarWidth(toolCount: 14, screenWidth: 1728) == 730,
+                     "toolbar fits its buttons without a large middle gap")
+        suite.expect(ScreenshotSupport.inPlaceToolbarWidth(toolCount: 14, screenWidth: 600) == 576,
+                     "compact toolbar still fits a narrow screen")
         let registrationDomain = UserDefaults.standard.volatileDomain(
             forName: UserDefaults.registrationDomain)
         defer {

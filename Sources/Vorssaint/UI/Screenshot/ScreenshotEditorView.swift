@@ -9,10 +9,15 @@ import UniformTypeIdentifiers
 struct ScreenshotEditorView: View {
     @ObservedObject var model: ScreenshotEditorModel
     let controller: ScreenshotEditorController
+    var inPlaceContext: ScreenshotSelectionController.EditingContext? = nil
+    var selectionAnchor: CGRect = .zero
+    var usesExternalBackdrop = false
     @ObservedObject private var l10n = L10n.shared
     @StateObject private var keyboard = ScreenshotShortcutContext()
 
     @State private var editingText = ""
+    @State private var sourceResizeOrigin: CGRect?
+    @State private var sourceResizeDraft: CGRect?
     @FocusState private var textFieldFocused: Bool
     @State private var expansionDragZoom: CGFloat?
     @State private var dragInFlight = false
@@ -47,6 +52,33 @@ struct ScreenshotEditorView: View {
     var body: some View {
         // Real rows and columns, not overlays: the canvas scrolls in its own
         // region, so zoomed content can never slide under the controls.
+        Group {
+            if let context = inPlaceContext {
+                inPlaceEditor(context)
+            } else {
+                windowEditor
+            }
+        }
+        .ignoresSafeArea()
+        .animation(.spring(response: 0.28, dampingFraction: 0.86), value: model.tool)
+        .animation(.easeOut(duration: 0.16), value: model.annotationShadowsEnabled)
+        .animation(.spring(response: 0.28, dampingFraction: 0.86), value: model.backdropStyle)
+        .onChange(of: model.tool) { old, new in
+            if old == .expandCanvas, new != .expandCanvas { expansionDragZoom = nil }
+        }
+        .onChange(of: model.expansionDraft) { _, draft in
+            if draft == nil, !model.expansionRejected { expansionDragZoom = nil }
+        }
+        .onAppear { keyboard.start() }
+        .onDisappear { keyboard.stop() }
+        .sheet(item: $sharedRecord) { record in
+            ScreenshotEditorSharedLinkView(record: record,
+                                           strings: strings,
+                                           close: { sharedRecord = nil })
+        }
+    }
+
+    private var windowEditor: some View {
         ZStack {
             artboard
             VStack(spacing: 0) {
@@ -71,23 +103,190 @@ struct ScreenshotEditorView: View {
                     .padding(.bottom, 10)
             }
         }
-        .ignoresSafeArea()
-        .animation(.spring(response: 0.28, dampingFraction: 0.86), value: model.tool)
-        .animation(.easeOut(duration: 0.16), value: model.annotationShadowsEnabled)
-        .animation(.spring(response: 0.28, dampingFraction: 0.86), value: model.backdropStyle)
-        .onChange(of: model.tool) { old, new in
-            if old == .expandCanvas, new != .expandCanvas { expansionDragZoom = nil }
+    }
+
+    private func inPlaceEditor(_ context: ScreenshotSelectionController.EditingContext) -> some View {
+        let sourceScale = CGFloat(context.image.width) / context.screenFrame.width
+        let currentFrame = model.sourceSelectionRect.map {
+            CGRect(x: $0.minX / sourceScale, y: $0.minY / sourceScale,
+                   width: $0.width / sourceScale, height: $0.height / sourceScale)
+        } ?? ScreenshotSupport.inPlaceSelectionFrame(
+            anchor: selectionAnchor, screenFrame: context.screenFrame, imagePointSize: model.pointSize)
+        let frame = sourceResizeDraft.map {
+            CGRect(x: $0.minX / sourceScale, y: $0.minY / sourceScale,
+                   width: $0.width / sourceScale, height: $0.height / sourceScale)
+        } ?? currentFrame
+        let toolbarSize = CGSize(width: ScreenshotSupport.inPlaceToolbarWidth(
+            toolCount: orderedTools.filter { $0 != .expandCanvas }.count,
+            screenWidth: context.screenFrame.width), height: 104)
+        let toolbar = ScreenshotSupport.inPlaceToolbarFrame(
+            selection: frame, screenSize: context.screenFrame.size,
+            toolbarSize: toolbarSize,
+            topInset: context.screenFrame.maxY - context.visibleFrame.maxY)
+        let zoom = currentFrame.width / max(model.imageSize.width, 1)
+        return ZStack(alignment: .topLeading) {
+            if !usesExternalBackdrop {
+                Image(decorative: context.image, scale: 1)
+                    .resizable()
+                    .frame(width: context.screenFrame.width, height: context.screenFrame.height)
+                    .allowsHitTesting(false)
+            }
+            Color.black.opacity(0.46).allowsHitTesting(false)
+            ZStack(alignment: .topLeading) {
+                if let draft = sourceResizeDraft, let preview = context.image.cropping(to: draft) {
+                    Image(decorative: preview, scale: sourceScale).resizable()
+                        .frame(width: frame.width, height: frame.height)
+                }
+                canvas(zoom: zoom, canvasSize: currentFrame.size, available: currentFrame.size)
+                    .frame(width: currentFrame.width, height: currentFrame.height)
+                    .offset(x: currentFrame.minX - frame.minX, y: currentFrame.minY - frame.minY)
+                    .allowsHitTesting(sourceResizeDraft == nil)
+            }
+            .frame(width: frame.width, height: frame.height, alignment: .topLeading)
+            .clipped()
+            .overlay(Rectangle().strokeBorder(Color.accentColor, lineWidth: 1.5)
+                .allowsHitTesting(false))
+            .offset(x: frame.minX, y: frame.minY)
+            if model.sourceSelectionRect != nil {
+                sourceSelectionGrips(frame: frame, context: context, sourceScale: sourceScale)
+            }
+            Text("\(Int((sourceResizeDraft ?? model.sourceSelectionRect)?.width ?? model.imageSize.width)) × \(Int((sourceResizeDraft ?? model.sourceSelectionRect)?.height ?? model.imageSize.height))")
+                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .padding(.horizontal, 9).padding(.vertical, 5)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
+                .offset(x: frame.minX, y: max(4, frame.minY - 30))
+                .allowsHitTesting(false)
+            VStack(spacing: 6) {
+                inPlaceToolbar
+                    .frame(height: 46)
+                ScrollView(.horizontal) {
+                    contextualBar.fixedSize()
+                }
+                .scrollIndicators(.never)
+                .frame(height: 48)
+            }
+            .frame(width: toolbarSize.width, height: toolbarSize.height, alignment: .top)
+            .offset(x: toolbar.minX, y: toolbar.minY)
         }
-        .onChange(of: model.expansionDraft) { _, draft in
-            if draft == nil, !model.expansionRejected { expansionDragZoom = nil }
+        .frame(width: context.screenFrame.width, height: context.screenFrame.height)
+        .coordinateSpace(name: "inPlaceScreen")
+        .onAppear {
+            model.currentDisplayZoom = zoom
+            if model.tool == .expandCanvas { model.tool = .select }
         }
-        .onAppear { keyboard.start() }
-        .onDisappear { keyboard.stop() }
-        .sheet(item: $sharedRecord) { record in
-            ScreenshotEditorSharedLinkView(record: record,
-                                           strings: strings,
-                                           close: { sharedRecord = nil })
+        .onChange(of: zoom) { _, value in model.currentDisplayZoom = value }
+    }
+
+    private func sourceSelectionGrips(frame: CGRect,
+                                      context: ScreenshotSelectionController.EditingContext,
+                                      sourceScale: CGFloat) -> some View {
+        ZStack(alignment: .topLeading) {
+            // Wide transparent edge strips are easy to grab without stealing
+            // drawing gestures from the middle of the selected image.
+            ForEach([ScreenshotSupport.Handle.top, .right, .bottom, .left], id: \.self) { handle in
+                let vertical = handle == .left || handle == .right
+                let point = handle.position(in: frame)
+                Color.clear
+                    .frame(width: vertical ? 10 : max(1, frame.width - 16),
+                           height: vertical ? max(1, frame.height - 16) : 10)
+                    .contentShape(Rectangle())
+                    .position(point)
+                    .gesture(sourceResizeGesture(handle, context: context, scale: sourceScale))
+                    .onHover { inside in resizeCursor(handle, inside: inside) }
+            }
+            ForEach(ScreenshotSupport.Handle.allCases, id: \.self) { handle in
+                Circle().fill(Color.accentColor)
+                    .overlay(Circle().strokeBorder(.white, lineWidth: 1.5))
+                    .frame(width: 8, height: 8)
+                    .padding(5)
+                    .contentShape(Rectangle())
+                    .position(handle.position(in: frame))
+                    .gesture(sourceResizeGesture(handle, context: context, scale: sourceScale))
+                    .onHover { inside in resizeCursor(handle, inside: inside) }
+            }
         }
+        .frame(width: context.screenFrame.width, height: context.screenFrame.height)
+    }
+
+    private func sourceResizeGesture(_ handle: ScreenshotSupport.Handle,
+                                     context: ScreenshotSelectionController.EditingContext,
+                                     scale: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("inPlaceScreen"))
+            .onChanged { value in
+                if sourceResizeOrigin == nil {
+                    commitEditingTextIfNeeded()
+                    sourceResizeOrigin = model.sourceSelectionRect
+                }
+                guard let origin = sourceResizeOrigin else { return }
+                let grip = handle.position(in: origin)
+                sourceResizeDraft = ScreenshotSupport.resizedSourceSelection(
+                    origin, handle: handle,
+                    to: CGPoint(x: grip.x + value.translation.width * scale,
+                                y: grip.y + value.translation.height * scale),
+                    sourceSize: CGSize(width: context.image.width, height: context.image.height))
+            }
+            .onEnded { _ in
+                if let draft = sourceResizeDraft {
+                    model.resizeSourceSelection(to: draft, from: context.image)
+                }
+                sourceResizeDraft = nil
+                sourceResizeOrigin = nil
+                NSCursor.arrow.set()
+            }
+    }
+
+    private func resizeCursor(_ handle: ScreenshotSupport.Handle, inside: Bool) {
+        guard inside else { NSCursor.arrow.set(); return }
+        switch handle {
+        case .top, .bottom: NSCursor.resizeUpDown.set()
+        case .left, .right: NSCursor.resizeLeftRight.set()
+        default: NSCursor.crosshair.set()
+        }
+    }
+
+    private var inPlaceToolbar: some View {
+        HStack(spacing: 5) {
+            ScrollView(.horizontal) {
+                HStack(spacing: 2) {
+                    ForEach(orderedTools.filter { $0 != .expandCanvas }, id: \.self) { tool in
+                        railButton(tool, height: 32)
+                    }
+                }
+            }
+            .scrollIndicators(.never)
+            Divider().frame(height: 24)
+            inlineAction("arrow.uturn.backward", title: "⌘Z") { model.undo() }
+                .disabled(!model.canUndo)
+            inlineAction("arrow.uturn.forward", title: "⇧⌘Z") { model.redo() }
+                .disabled(!model.canRedo)
+            inlineAction("pin", title: strings.pinButton) {
+                controller.pin()
+                controller.close()
+            }
+            inlineAction("square.and.arrow.down", title: strings.saveButton) { controller.save() }
+            inlineAction("xmark", title: strings.discardConfirm) { controller.discardAndClose() }
+                .foregroundStyle(.red)
+            inlineAction("checkmark", title: strings.copyButton + "  ⏎") { controller.copyToClipboard() }
+                .foregroundStyle(.green)
+        }
+        .padding(.horizontal, 9).padding(.vertical, 6)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.12)))
+        .shadow(color: .black.opacity(0.2), radius: 14, y: 4)
+    }
+
+    private func inlineAction(_ symbol: String, title: String, action: @escaping () -> Void) -> some View {
+        Button {
+            commitEditingTextIfNeeded()
+            action()
+        } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 15, weight: .medium))
+                .frame(width: 31, height: 32)
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel(title)
+        .screenshotSafeHelp(title)
     }
 
     /// The window's crown: the brand centered like the menu bar panel, the
@@ -191,7 +390,7 @@ struct ScreenshotEditorView: View {
     }
 
     private func canvas(zoom: CGFloat, canvasSize: CGSize, available: CGSize) -> some View {
-        let outerRadius = model.showsBackdrop
+        let outerRadius: CGFloat = inPlaceContext != nil ? 0 : model.showsBackdrop
             ? 6
             : max(4, model.cardCornerPixels * zoom)
         return ZStack {
@@ -213,13 +412,15 @@ struct ScreenshotEditorView: View {
             RoundedRectangle(cornerRadius: outerRadius, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.14), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.30), radius: 24, y: 10)
-        .shadow(color: .black.opacity(0.18), radius: 3, y: 1)
-        .scaleEffect(appeared ? 1 : 0.965)
-        .opacity(appeared ? 1 : 0)
+        .shadow(color: .black.opacity(inPlaceContext == nil ? 0.30 : 0),
+                radius: inPlaceContext == nil ? 24 : 0, y: 10)
+        .shadow(color: .black.opacity(inPlaceContext == nil ? 0.18 : 0),
+                radius: inPlaceContext == nil ? 3 : 0, y: 1)
+        .scaleEffect(inPlaceContext != nil || appeared ? 1 : 0.965)
+        .opacity(inPlaceContext != nil || appeared ? 1 : 0)
         .onAppear {
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                appeared = true
+            if inPlaceContext == nil {
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) { appeared = true }
             }
         }
         .overlay(alignment: .topLeading) {
@@ -1211,8 +1412,10 @@ struct ScreenshotEditorView: View {
             }
             annotationShadowButton
             Divider().frame(height: 16)
-            backdropButton
-            Divider().frame(height: 16)
+            if inPlaceContext == nil {
+                backdropButton
+                Divider().frame(height: 16)
+            }
             watermarkButton
         }
         .padding(.horizontal, 12)

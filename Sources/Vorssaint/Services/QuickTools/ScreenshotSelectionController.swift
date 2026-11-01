@@ -16,12 +16,58 @@ import SwiftUI
 /// area is for and only one session is ever on screen.
 final class ScreenshotSelectionController {
 
+    private static var editingCursorOwners = 0
+
+    static func retainEditingCursor() {
+        editingCursorOwners += 1
+        refreshBackgroundCursor()
+    }
+
+    static func releaseEditingCursor() {
+        editingCursorOwners = max(0, editingCursorOwners - 1)
+        refreshBackgroundCursor()
+    }
+
+    private static func refreshBackgroundCursor() {
+        BackgroundCursor.setAllowed(isSessionOnScreen || editingCursorOwners > 0)
+    }
+
     struct Capture {
         let image: CGImage
         /// Pixels per point of the source display, for 1x export math.
         let scale: CGFloat
         /// The captured area in Cocoa global coordinates.
         let anchorRect: CGRect
+        /// Ephemeral desktop still for editing at the selection's original
+        /// location. Never written to history or exported with the picture.
+        var editingContext: EditingContext? = nil
+        var editingSurface: EditingSurface? = nil
+    }
+
+    /// A synchronous, one-owner handoff. Weak ownership prevents a history
+    /// item or a delayed clipboard task from keeping a full-screen panel up.
+    final class EditingSurface {
+        weak var panel: NSPanel?
+        private(set) var isClaimed = false
+        private let prepare: () -> Void
+
+        init(panel: NSPanel, prepare: @escaping () -> Void) {
+            self.panel = panel
+            self.prepare = prepare
+        }
+
+        func claim() -> NSPanel? {
+            guard !isClaimed, let panel else { return nil }
+            isClaimed = true
+            prepare()
+            return panel
+        }
+    }
+
+    struct EditingContext {
+        let image: CGImage
+        let screenFrame: CGRect
+        let visibleFrame: CGRect
     }
 
     /// What the caller wants out of the same gesture. The screenshot tool
@@ -292,7 +338,7 @@ final class ScreenshotSelectionController {
             // instead of waiting for the Z toggle.
             toggleLoupe()
         }
-        BackgroundCursor.setAllowed(true)
+        Self.refreshBackgroundCursor()
         NSCursor.crosshair.set()
     }
 
@@ -823,6 +869,7 @@ final class ScreenshotSelectionController {
     /// reaches the window server only with the next commit, too late for a
     /// panel already fading, so the flush sends it before the panels leave.
     private func retirePanels() {
+        guard !panels.isEmpty else { return }
         panels.forEach { $0.ignoresMouseEvents = true }
         CATransaction.flush()
         panels.forEach { $0.orderOut(nil) }
@@ -841,6 +888,20 @@ final class ScreenshotSelectionController {
 
     private func finish(_ outcome: Outcome) {
         guard !finished else { return }
+        var outcome = outcome
+        var editingSurface: EditingSurface?
+        if case .captured(var capture) = outcome,
+           let panel = panels.first(where: { $0.screenFrame.contains(capture.anchorRect) }),
+           let frozen = panel.frozenImage,
+           let screen = NSScreen.screens.first(where: { $0.displayID == panel.displayID }) {
+            capture.editingContext = EditingContext(image: frozen,
+                                                    screenFrame: panel.screenFrame,
+                                                    visibleFrame: screen.visibleFrame)
+            let surface = EditingSurface(panel: panel) { [weak panel] in panel?.releaseSelectionViews() }
+            capture.editingSurface = surface
+            editingSurface = surface
+            outcome = .captured(capture)
+        }
         finished = true
         Self.isSessionOnScreen = false
         if Self.activeSession === self { Self.activeSession = nil }
@@ -857,13 +918,22 @@ final class ScreenshotSelectionController {
         // inert before they leave the screen: whatever arrives after this
         // point finds nothing left to act on.
         markCapturePending()
-        retirePanels()
-        panels.removeAll()
         NSCursor.arrow.set()
-        BackgroundCursor.setAllowed(false)
+        Self.refreshBackgroundCursor()
         let completion = completion
         self.completion = nil
-        completion?(outcome)
+        if let surface = editingSurface {
+            // The editor swaps content on the existing visible surface. Do
+            // not expose the desktop between selection and its toolbar.
+            completion?(outcome)
+            panels.removeAll { surface.isClaimed && $0 === surface.panel }
+            retirePanels()
+            panels.removeAll()
+        } else {
+            retirePanels()
+            panels.removeAll()
+            completion?(outcome)
+        }
     }
 }
 
@@ -917,6 +987,14 @@ private final class ScreenshotOverlayPanel: OverlayPanel {
     private var backdropView: NSImageView!
 
     var overlayView: ScreenshotOverlayView { overlayViewStorage }
+
+    func releaseSelectionViews() {
+        // Keep the already presented NSImageView in its container. Only the
+        // selection chrome is replaced, so the full desktop texture survives.
+        overlayViewStorage?.removeFromSuperview()
+        overlayViewStorage = nil
+        backdropView = nil
+    }
 
     var frozenImageSize: CGSize? {
         frozenImage.map { CGSize(width: $0.width, height: $0.height) }

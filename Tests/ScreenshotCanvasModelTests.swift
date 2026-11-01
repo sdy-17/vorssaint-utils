@@ -6,6 +6,7 @@ import AppKit
 enum ScreenshotCanvasModelTests {
     class Fixture {
         var baseImage: CGImage
+        var sourceSelectionRect: CGRect?
         var imageSize: CGSize { CGSize(width: baseImage.width, height: baseImage.height) }
         var annotations: [ScreenshotSupport.Annotation] = []
         var selectedID: UUID?
@@ -24,8 +25,8 @@ enum ScreenshotCanvasModelTests {
         var textRuns: [CGRect]?
         var textWords: [ScreenshotSupport.RecognizedWord] = []
         var carriedRuns: [ObjectIdentifier: [CGRect]] = [:]
-        var undoStack: [(image: CGImage, annotations: [ScreenshotSupport.Annotation])] = []
-        var redoStack: [(image: CGImage, annotations: [ScreenshotSupport.Annotation])] = []
+        var undoStack: [(image: CGImage, annotations: [ScreenshotSupport.Annotation], sourceRect: CGRect?)] = []
+        var redoStack: [(image: CGImage, annotations: [ScreenshotSupport.Annotation], sourceRect: CGRect?)] = []
         static let undoLimit = 60
         var canUndo = false, canRedo = false, isDirty = false
         var textSelectionAnchor: CGPoint?
@@ -110,6 +111,7 @@ enum ScreenshotCanvasModelTests {
     }
 
     static func run(_ suite: TestSuite) {
+        sourceSelectionResizing(suite)
         counterSizeAfterExpansion(suite)
         samplesAfterExpansion(suite)
         pasteFromClipboard(suite)
@@ -146,6 +148,41 @@ enum ScreenshotCanvasModelTests {
                      "an invalid expansion is rejected")
         suite.expect(host.baseImage === current && host.undoStack.count == count,
                      "failure leaves image and history unchanged")
+    }
+
+    private static func sourceSelectionResizing(_ suite: TestSuite) {
+        let cg = CGContext(data: nil, width: 80, height: 60, bitsPerComponent: 8,
+                           bytesPerRow: 320, space: CGColorSpaceCreateDeviceRGB(),
+                           bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        cg.setFillColor(CGColor(srgbRed: 1, green: 0, blue: 0, alpha: 1))
+        cg.fill(CGRect(x: 0, y: 0, width: 40, height: 60))
+        cg.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 1, alpha: 1))
+        cg.fill(CGRect(x: 40, y: 0, width: 40, height: 60))
+        let source = cg.makeImage()!
+        let initial = CGRect(x: 10, y: 10, width: 20, height: 20)
+        let host = Host(image: source.cropping(to: initial)!)
+        host.sourceSelectionRect = initial
+        host.annotations = [ScreenshotSupport.Annotation(
+            tool: .arrow, rect: CGRect(x: 5, y: 5, width: 10, height: 10),
+            points: [CGPoint(x: 5, y: 5), CGPoint(x: 15, y: 15)])]
+        let expanded = CGRect(x: 5, y: 5, width: 65, height: 40)
+        suite.expect(host.resizeSourceSelection(to: expanded, from: source),
+                     "selection expands into the original frozen display")
+        suite.expect(host.imageSize == expanded.size
+                        && ScreenshotCanvasSupportTests.pixel(host.baseImage, x: 50, y: 10)[2] > 200,
+                     "expanded area contains original blue pixels instead of a stretched crop")
+        suite.expect(host.annotations[0].points[0] == CGPoint(x: 10, y: 10),
+                     "selection movement preserves an arrow's desktop position")
+        suite.expect(host.undoStack.count == 1, "one boundary drag creates one undo entry")
+        host.undo()
+        suite.expect(host.sourceSelectionRect == initial && host.imageSize == initial.size
+                        && host.annotations[0].points[0] == CGPoint(x: 5, y: 5),
+                     "undo restores selection bounds, pixels and annotation coordinates together")
+        host.redo()
+        suite.expect(host.sourceSelectionRect == expanded && host.imageSize == expanded.size,
+                     "redo restores the expanded selection")
+        suite.expect(!host.resizeSourceSelection(to: expanded, from: source) && host.undoStack.count == 1,
+                     "clicking a grip without moving does not create an edit")
     }
 
     /// Older blur areas keep their block size through a new canvas, and with
