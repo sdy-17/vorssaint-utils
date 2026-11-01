@@ -637,7 +637,13 @@ final class ScreenshotService: ObservableObject {
         // is no longer the stored original, so the shortcut keeps that
         // original back until a newer capture arrives.
         withholdLatestCapture()
-        let editor = ScreenshotEditorController(capture: capture)
+        let editor: ScreenshotEditorController
+        if let prepared = capture.editingSurface?.preparedEditor,
+           prepared.adoptPreparation(for: capture) {
+            editor = prepared
+        } else {
+            editor = ScreenshotEditorController(capture: capture)
+        }
         editors.append(editor)
         editor.show()
     }

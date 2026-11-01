@@ -67,6 +67,21 @@ enum ScreenshotFeatureTests {
                      "toolbar fits its buttons without a large middle gap")
         suite.expect(ScreenshotSupport.inPlaceToolbarWidth(toolCount: 14, screenWidth: 600) == 576,
                      "compact toolbar still fits a narrow screen")
+        let offsetScreen = CGRect(x: -1728, y: 200, width: 1728, height: 1117)
+        let fractionalArea = CGRect(x: -1600.25, y: 1100.1, width: 300.4, height: 100.2)
+        let expectedPixels = ScreenshotSupport.imagePixelRect(
+            fromView: CGRect(x: fractionalArea.minX - offsetScreen.minX,
+                             y: offsetScreen.maxY - fractionalArea.maxY,
+                             width: fractionalArea.width, height: fractionalArea.height),
+            viewSize: offsetScreen.size, imageSize: CGSize(width: 3456, height: 2234))
+        suite.expect(ScreenshotSupport.preparedCaptureRect(
+            anchor: fractionalArea, screenFrame: offsetScreen,
+            sourceSize: CGSize(width: 3456, height: 2234), imageSize: expectedPixels.size) == expectedPixels,
+                     "prepared capture uses identical outward rounding on an offset Retina screen")
+        suite.expect(ScreenshotSupport.preparedCaptureRect(
+            anchor: fractionalArea, screenFrame: offsetScreen,
+            sourceSize: CGSize(width: 3456, height: 2234), imageSize: CGSize(width: 1, height: 1)) == nil,
+                     "a differently sized window-server capture cannot consume the prepared canvas")
         let registrationDomain = UserDefaults.standard.volatileDomain(
             forName: UserDefaults.registrationDomain)
         defer {

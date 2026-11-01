@@ -48,6 +48,7 @@ final class ScreenshotSelectionController {
     /// item or a delayed clipboard task from keeping a full-screen panel up.
     final class EditingSurface {
         weak var panel: NSPanel?
+        weak var preparedEditor: ScreenshotEditorController?
         private(set) var isClaimed = false
         private let prepare: () -> Void
 
@@ -89,6 +90,7 @@ final class ScreenshotSelectionController {
     }
 
     private var panels: [ScreenshotOverlayPanel] = []
+    private var preparedEditors: [CGDirectDisplayID: ScreenshotEditorController] = [:]
 
     var protectedWindowIDs: Set<CGWindowID> {
         Set(panels.compactMap { $0.windowNumber > 0 ? CGWindowID($0.windowNumber) : nil })
@@ -340,6 +342,29 @@ final class ScreenshotSelectionController {
         }
         Self.refreshBackgroundCursor()
         NSCursor.crosshair.set()
+        if let panel = keyPanelUnderMouse() { scheduleEditorPreparation(on: panel) }
+    }
+
+    fileprivate func scheduleEditorPreparation(on panel: ScreenshotOverlayPanel) {
+        DispatchQueue.main.async { [weak self, weak panel] in
+            guard let self, let panel, !self.finished, self.freeze,
+                  self.activeMode == .image, !self.scrollingCaptureEnabled,
+                  self.preparedEditors[panel.displayID] == nil,
+                  self.activeTool == .screenshot || (self.activeTool == nil && self.purpose == nil),
+                  ScreenshotDefaultAction.current == .edit,
+                  let image = panel.frozenImage,
+                  let screen = NSScreen.screens.first(where: { $0.displayID == panel.displayID }) else { return }
+            let context = EditingContext(image: image, screenFrame: panel.screenFrame,
+                                         visibleFrame: screen.visibleFrame)
+            if let editor = ScreenshotEditorController.prepareInPlace(in: panel, context: context, captureScale: panel.pixelScale) {
+                self.preparedEditors[panel.displayID] = editor
+            }
+        }
+    }
+
+    private func discardPreparedEditors() {
+        preparedEditors.values.forEach { $0.discardPreparation() }
+        preparedEditors.removeAll()
     }
 
     private func screenCaptureToolDidChange() {
@@ -876,6 +901,7 @@ final class ScreenshotSelectionController {
     }
 
     deinit {
+        discardPreparedEditors()
         // A session that goes away without ending would otherwise leave the
         // screen marked as taken and every capture feature dead until the app
         // is restarted. The wrong flag is always the one that lets a capture
@@ -898,6 +924,7 @@ final class ScreenshotSelectionController {
                                                     screenFrame: panel.screenFrame,
                                                     visibleFrame: screen.visibleFrame)
             let surface = EditingSurface(panel: panel) { [weak panel] in panel?.releaseSelectionViews() }
+            surface.preparedEditor = preparedEditors[panel.displayID]
             capture.editingSurface = surface
             editingSurface = surface
             outcome = .captured(capture)
@@ -926,10 +953,12 @@ final class ScreenshotSelectionController {
             // The editor swaps content on the existing visible surface. Do
             // not expose the desktop between selection and its toolbar.
             completion?(outcome)
+            discardPreparedEditors()
             panels.removeAll { surface.isClaimed && $0 === surface.panel }
             retirePanels()
             panels.removeAll()
         } else {
+            discardPreparedEditors()
             retirePanels()
             panels.removeAll()
             completion?(outcome)
@@ -1386,6 +1415,7 @@ private final class ScreenshotOverlayView: NSView {
         hoverPoint = point
         dragOrigin = point
         controller?.setSelectionInProgress(true)
+        if let panel { controller?.scheduleEditorPreparation(on: panel) }
         lastDragPoint = point
         selection = .zero
         needsDisplay = true

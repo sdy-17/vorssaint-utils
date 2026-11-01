@@ -21,7 +21,7 @@
 ./build.sh --test-suite=display-configuration --test-suite=settings --test-suite=screenshots
 ```
 
-本机最近一次截图测试通过 1,607 项检查，优化构建和 selftest 通过。显示配置与设置套件此前通过 721 项检查。实际验证包括外屏 HiDPI、模式切换、ICC 切换、主屏与配置恢复，以及原位标注、边框调整、文字输入、按需 OCR 和取消操作。
+本机最近一次截图测试通过 1,614 项检查，优化构建和 selftest 通过。显示配置与设置套件此前通过 721 项检查。实际验证包括外屏 HiDPI、模式切换、ICC 切换、主屏与配置恢复，以及原位标注、边框调整、文字输入、按需 OCR 和取消操作。
 
 详细实现、实际验证和未测边界见：
 

@@ -7,12 +7,17 @@ import Foundation
 /// AppKit panel, so lifetime checks never create or manipulate desktop UI.
 enum ScreenshotEditingSurfaceTests {
     final class NSPanel {}
+    final class ScreenshotEditorController {}
 
     static func run(_ suite: TestSuite) {
         var panel: NSPanel? = NSPanel()
         weak let observed = panel
         var prepared = 0
         let lease = EditingSurface(panel: panel!) { prepared += 1 }
+        var editor: ScreenshotEditorController? = ScreenshotEditorController()
+        lease.preparedEditor = editor
+        editor = nil
+        suite.expect(lease.preparedEditor == nil, "surface lease cannot retain a prepared editor cycle")
         var adopted = lease.claim()
         suite.expect(adopted === panel && lease.isClaimed && prepared == 1,
                      "editor claims the visible capture surface exactly once")

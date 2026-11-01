@@ -28,7 +28,7 @@ selected image and annotations, never the surrounding desktop or toolbar.
 HiDPI geometry uses source pixels for rendering and Cocoa points for placement.
 The app keeps the same bundle identifier and local signing certificate.
 
-Validation: `./build.sh --test-suite=screenshots` passes 1,607 checks, including
+Validation: `./build.sh --test-suite=screenshots` passes 1,614 checks, including
 selection placement on negative-origin HiDPI displays, bottom-edge toolbar
 placement and full-screen toolbar bounds. UI checks on the installed signed app passed: a 400×250-point selection stayed
 in place; arrow annotation, Undo/Redo and Escape worked; a separate safe settings
@@ -82,3 +82,29 @@ captures cancelled without residual shields. Their CPU sample had no
 ScreenshotEditorModel OCR/QR work and no retirePanels flush work; showInPlace
 was only briefly sampled. Initial screen capture can still prepare images, so
 this does not establish zero visible latency or a precise percentage improvement.
+
+Mouse-up presentation follow-up: the frozen selection now prepares an invisible
+editor host below selection chrome before the drag completes, using only a
+16×16 seed crop. It lays out the toolbar without recognition, activation or a
+WindowServer flush. On mouse-up the existing model receives the real crop and
+source rectangle, and the attached host becomes visible. The preparation is
+reused only for the identical source image, scale, screen frame and exact
+rounded crop size. Other captures keep the original fallback.
+
+The source owns prepared controllers until handoff; the surface lease references
+them weakly. Cancellation and abandoned sessions detach unused hosts, while the
+presented editor consumes its host reference. Prepared hosts set the native accessibility-hidden flag until shown; actual
+VoiceOver traversal has not been verified. Tests cover exact fractional Retina crop rounding,
+rejection of mismatched captures, safe fresh-model rebinding and refusal to
+replace an edited document. Preparation preserves the source capture scale.
+
+Prepared-host validation: initial selection showed no visible seed crop, grips
+or toolbar. Region capture displayed the real 400×250 selection; arrow drawing,
+resizing to 450×250, Undo, typing and Escape worked. Three capture-open/Cancel
+cycles and two normal captures left no residual shield. Native AXHidden is set,
+but the automation full accessibility tree still lists hidden descendants and
+does not expose the flag; actual VoiceOver reachability remains unverified.
+A subsequent sample placed the substantial host/control layout under
+prepareInPlace before mouse-up. showInPlace only showed brief panel handoff and
+property work, rather than first-time host attachment. No exact frame latency
+or subjective no-stutter result is asserted.

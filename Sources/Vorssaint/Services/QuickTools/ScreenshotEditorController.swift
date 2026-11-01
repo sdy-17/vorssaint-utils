@@ -664,6 +664,18 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
         return true
     }
 
+    /// Only an unused, invisible prepared editor can receive the real image.
+    /// Rebinding keeps its already-laid-out controls and view identity intact.
+    func installPreparedCapture(image: CGImage, sourceRect: CGRect) -> Bool {
+        guard annotations.isEmpty, undoStack.isEmpty, redoStack.isEmpty,
+              editingTextID == nil else { return false }
+        baseImage = image
+        sourceSelectionRect = sourceRect
+        cropDraft = tool == .crop ? CGRect(origin: .zero, size: imageSize) : nil
+        recordCleanState()
+        return true
+    }
+
     // MARK: - Undo
 
     private func registerUndo() {
@@ -1440,7 +1452,8 @@ final class ScreenshotEditorModel: ObservableObject, BackdropEditing {
 /// effect: clipboard, files, pins, text recognition and the close-confirm.
 final class ScreenshotEditorController: NSObject, NSWindowDelegate {
     let model: ScreenshotEditorModel
-    private let capture: ScreenshotSelectionController.Capture
+    private var capture: ScreenshotSelectionController.Capture
+    private var preparedHost: NSHostingView<ScreenshotEditorView>?
     private var displayObserver: NSObjectProtocol?
     private var isInPlaceEditor = false
     private var retainsActivation = false
@@ -1463,17 +1476,60 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
         model = ScreenshotEditorModel(image: capture.image, scale: capture.scale)
         super.init()
         if let context = capture.editingContext {
-            let sourceScale = CGFloat(context.image.width) / context.screenFrame.width
-            let pixels = CGRect(x: (capture.anchorRect.minX - context.screenFrame.minX) * sourceScale,
-                                y: (context.screenFrame.maxY - capture.anchorRect.maxY) * sourceScale,
-                                width: capture.anchorRect.width * sourceScale,
-                                height: capture.anchorRect.height * sourceScale)
-            if abs(pixels.width - CGFloat(capture.image.width)) <= 1,
-               abs(pixels.height - CGFloat(capture.image.height)) <= 1 {
-                model.sourceSelectionRect = CGRect(x: pixels.minX.rounded(), y: pixels.minY.rounded(),
-                                                   width: CGFloat(capture.image.width), height: CGFloat(capture.image.height))
-            }
+            model.sourceSelectionRect = ScreenshotSupport.preparedCaptureRect(
+                anchor: capture.anchorRect, screenFrame: context.screenFrame,
+                sourceSize: CGSize(width: context.image.width, height: context.image.height),
+                imageSize: CGSize(width: capture.image.width, height: capture.image.height))
         }
+    }
+
+    static func prepareInPlace(in panel: NSPanel,
+                               context: ScreenshotSelectionController.EditingContext,
+                               captureScale: CGFloat) -> ScreenshotEditorController? {
+        guard let container = panel.contentView, let chrome = container.subviews.last,
+              let image = context.image.cropping(to: CGRect(x: 0, y: 0, width: 16, height: 16)) else { return nil }
+        let scale = CGFloat(context.image.width) / context.screenFrame.width
+        let anchor = CGRect(x: context.screenFrame.minX, y: context.screenFrame.maxY - 16 / scale,
+                            width: 16 / scale, height: 16 / scale)
+        var seed = ScreenshotSelectionController.Capture(image: image, scale: captureScale, anchorRect: anchor)
+        seed.editingContext = context
+        let editor = ScreenshotEditorController(capture: seed)
+        guard !editor.model.showsBackdrop, editor.model.sourceSelectionRect != nil else { return nil }
+        editor.model.usesOnDemandRecognition = true
+        let host = NSHostingView(rootView: ScreenshotEditorView(
+            model: editor.model, controller: editor, inPlaceContext: context,
+            selectionAnchor: anchor, usesExternalBackdrop: true))
+        host.sizingOptions = []
+        host.frame = container.bounds
+        host.autoresizingMask = [.width, .height]
+        host.alphaValue = 0
+        host.setAccessibilityHidden(true)
+        editor.preparedHost = host
+        container.addSubview(host, positioned: .below, relativeTo: chrome)
+        // Do graph/control layout before mouse-up, while selection chrome is
+        // still in charge. Never flush WindowServer or run image recognition.
+        host.layoutSubtreeIfNeeded()
+        return editor
+    }
+
+    func adoptPreparation(for capture: ScreenshotSelectionController.Capture) -> Bool {
+        guard window == nil, preparedHost != nil, capture.scale == model.scale,
+              let context = capture.editingContext,
+              let seed = self.capture.editingContext,
+              context.image === seed.image, context.screenFrame == seed.screenFrame,
+              let pixels = ScreenshotSupport.preparedCaptureRect(
+                anchor: capture.anchorRect, screenFrame: context.screenFrame,
+                sourceSize: CGSize(width: context.image.width, height: context.image.height),
+                imageSize: CGSize(width: capture.image.width, height: capture.image.height)),
+              model.installPreparedCapture(image: capture.image, sourceRect: pixels) else { return false }
+        self.capture = capture
+        return true
+    }
+
+    func discardPreparation() {
+        guard window == nil else { return }
+        preparedHost?.removeFromSuperview()
+        preparedHost = nil
     }
 
     func show() {
@@ -1545,9 +1601,10 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
         }
         let reused = capture.editingSurface?.claim()
         let backdropContainer = reused?.contentView
-        let host = NSHostingView(rootView: ScreenshotEditorView(
+        let host = preparedHost ?? NSHostingView(rootView: ScreenshotEditorView(
             model: model, controller: self, inPlaceContext: context,
             selectionAnchor: capture.anchorRect, usesExternalBackdrop: backdropContainer != nil))
+        preparedHost = nil
         host.sizingOptions = []
         let panel = reused ?? ScreenshotInPlaceEditorPanel(contentRect: context.screenFrame,
                                                           styleMask: [.borderless, .nonactivatingPanel],
@@ -1556,10 +1613,12 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
         if let container = backdropContainer {
             host.frame = container.bounds
             host.autoresizingMask = [.width, .height]
-            container.addSubview(host)
+            if host.superview !== container { container.addSubview(host) }
         } else {
             panel.contentView = host
         }
+        host.alphaValue = 1
+        host.setAccessibilityHidden(false)
         panel.isReleasedWhenClosed = false
         panel.isOpaque = true
         panel.backgroundColor = .black

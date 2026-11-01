@@ -1133,6 +1133,19 @@ enum ScreenshotSupport {
             || annotations.contains { $0.tool == .pixelate && $0.blurTextOnly }
     }
 
+    /// Matches the exact outward pixel rounding used by frozen region capture.
+    /// A window-server image with different bounds must not reuse this editor.
+    static func preparedCaptureRect(anchor: CGRect, screenFrame: CGRect,
+                                     sourceSize: CGSize, imageSize: CGSize) -> CGRect? {
+        guard screenFrame.contains(anchor), !anchor.isEmpty else { return nil }
+        let local = CGRect(x: anchor.minX - screenFrame.minX,
+                           y: screenFrame.maxY - anchor.maxY,
+                           width: anchor.width, height: anchor.height)
+        let pixels = imagePixelRect(fromView: local, viewSize: screenFrame.size, imageSize: sourceSize)
+        guard pixels.size == imageSize else { return nil }
+        return pixels
+    }
+
     /// A fresh editor should be large enough for its controls and canvas,
     /// while still fitting compact or rotated displays.
     static func editorMinimumContentSize(visibleSize: CGSize) -> CGSize {

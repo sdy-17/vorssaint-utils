@@ -173,18 +173,28 @@ enum ScreenshotShareCompletionTests {
         static var isWithheld = false
         static func load() -> Int? { stored }
         static func save(_ capture: Int) { stored = capture; isWithheld = false }
+        static func save(_ capture: ScreenshotSelectionController.Capture) { save(capture.value) }
         static func clear() { stored = nil; isWithheld = false }
         static func withhold() { isWithheld = true }
     }
 
     enum ScreenshotSelectionController {
-        typealias Capture = Int
+        // Upload tests use scalar pictures and never prepare a desktop view.
+        struct Capture: ExpressibleByIntegerLiteral {
+            let value: Int
+            init(integerLiteral value: Int) { self.value = value }
+            var editingSurface: EditingSurface? { nil }
+        }
+        final class EditingSurface {
+            weak var preparedEditor: ScreenshotEditorController?
+        }
     }
 
     final class ScreenshotEditorController {
         let capture: Int
         var shown = false
-        init(capture: Int) { self.capture = capture }
+        init(capture: ScreenshotSelectionController.Capture) { self.capture = capture.value }
+        func adoptPreparation(for capture: ScreenshotSelectionController.Capture) -> Bool { false }
         func show() { shown = true }
     }
 

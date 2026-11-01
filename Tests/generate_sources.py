@@ -237,7 +237,7 @@ def main():
     write("ScreenshotCanvasModel.swift",
           "import AppKit\nextension ScreenshotCanvasModelTests {\nfinal class Host: Fixture {\n"
           + "".join(declaration(editor, prefix) for prefix in [
-              "    func pasteImage(", "    func commitCanvasExpansion(", "    func resizeSourceSelection(",
+              "    func pasteImage(", "    func commitCanvasExpansion(", "    func resizeSourceSelection(", "    func installPreparedCapture(",
               "    private func registerUndo()", "    func undo()", "    func redo()",
               "    private func restore(", "    private func refreshUndoFlags()",
               "    func cancelCanvasExpansion()", "    func leaveCanvasExpansion()", "    func hitTest("])

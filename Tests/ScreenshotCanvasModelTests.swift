@@ -43,6 +43,7 @@ enum ScreenshotCanvasModelTests {
         func ensureBlurSamplesForAnnotations() {}
         func pruneCarriedRuns() {}
         func refreshDirtyState() {}
+        func recordCleanState() { isDirty = false }
     }
 
     /// Command-V with a pasteboard lane that waits until the test runs it
@@ -112,6 +113,7 @@ enum ScreenshotCanvasModelTests {
 
     static func run(_ suite: TestSuite) {
         sourceSelectionResizing(suite)
+        preparedCaptureRebinding(suite)
         counterSizeAfterExpansion(suite)
         samplesAfterExpansion(suite)
         pasteFromClipboard(suite)
@@ -148,6 +150,26 @@ enum ScreenshotCanvasModelTests {
                      "an invalid expansion is rejected")
         suite.expect(host.baseImage === current && host.undoStack.count == count,
                      "failure leaves image and history unchanged")
+    }
+
+    private static func preparedCaptureRebinding(_ suite: TestSuite) {
+        let seed = ScreenshotCanvasSupportTests.image(width: 16, height: 16)
+        let actual = ScreenshotCanvasSupportTests.image(width: 300, height: 200)
+        let host = Host(image: seed)
+        let source = CGRect(x: 120, y: 80, width: 300, height: 200)
+        suite.expect(host.installPreparedCapture(image: actual, sourceRect: source),
+                     "unused prepared editor accepts the final source image")
+        suite.expect(host.baseImage === actual && host.sourceSelectionRect == source
+                        && host.undoStack.isEmpty && !host.canUndo,
+                     "rebinding preserves an empty editing history and exact pixel placement")
+        host.annotations = [ScreenshotSupport.Annotation(tool: .arrow)]
+        suite.expect(!host.installPreparedCapture(image: seed, sourceRect: .zero)
+                        && host.baseImage === actual && host.annotations.count == 1,
+                     "preparation cannot replace an already annotated document")
+        host.annotations = []
+        host.editingTextID = UUID()
+        suite.expect(!host.installPreparedCapture(image: seed, sourceRect: .zero),
+                     "preparation cannot replace an active text edit")
     }
 
     private static func sourceSelectionResizing(_ suite: TestSuite) {
