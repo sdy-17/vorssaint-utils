@@ -28,9 +28,6 @@ final class WindowPreviewProvider {
     /// parked by Stage Manager, which cannot be recaptured until reactivated.
     private static let cacheByteBudget = 64 * 1024 * 1024
     private var captureTask: Task<Void, Never>?
-    private var warmTask: Task<Void, Never>?
-    private var activationToken: NSObjectProtocol?
-    private var pendingWarmPid: pid_t?
     private var pressureSource: DispatchSourceMemoryPressure?
 
     init() {
@@ -412,118 +409,11 @@ final class WindowPreviewProvider {
         lastTouched[id] = ProcessInfo.processInfo.systemUptime
     }
 
-    // MARK: - Opportunistic warming
+    // Previews are refreshed only by a visible switcher or Dock preview.
+    // App activation must not acquire pixels: merely changing apps is not
+    // consent to capture their windows, even for an in-memory thumbnail cache.
 
-    /// Windows parked in the Stage Manager strip cannot be captured (every API
-    /// returns the strip's tilted artwork), so the cache is warmed the moment
-    /// an app becomes active — its windows are capturable right then. By the
-    /// time the switcher opens, most tiles have a real last-seen preview even
-    /// if their window is parked again.
-    func startWarming() {
-        guard activationToken == nil else { return }
-        activationToken = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification,
-            object: nil, queue: .main
-        ) { [weak self] note in
-            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-            else { return }
-            self?.scheduleWarm(pid: app.processIdentifier)
-        }
-        if let front = NSWorkspace.shared.frontmostApplication {
-            scheduleWarm(pid: front.processIdentifier)
-        }
-    }
-
-    func stopWarming() {
-        if let activationToken {
-            NSWorkspace.shared.notificationCenter.removeObserver(activationToken)
-        }
-        activationToken = nil
-        pendingWarmPid = nil
-        warmTask?.cancel()
-        warmTask = nil
-    }
-
-    /// The activated app's windows are listed here, off the main thread. A
-    /// slow app can hold that Accessibility walk for seconds, which must not
-    /// tie up a thread Swift's tasks share.
-    private static let warmEnumerationQueue = DispatchQueue(label: "com.vorssaint.preview.warm-enumeration",
-                                                            qos: .utility)
-
-    /// Waits for the stage/space transition to settle, then captures the
-    /// activated app's windows. Never prunes: warming only adds fresh entries.
-    private func scheduleWarm(pid: pid_t) {
-        // Only the switcher warms, so its own paused apps apply.
-        let excludedAppsKey = DefaultsKey.switcherPreviewExcludedApps
-        guard Permissions.shared.screenRecording, Self.screenIsInView(),
-              !Self.captureIsPaused(excludedAppsKey: excludedAppsKey) else { return }
-        pendingWarmPid = pid
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
-            guard let self,
-                  self.pendingWarmPid == pid,
-                  self.activationToken != nil,
-                  Self.screenIsInView(),
-                  !Self.captureIsPaused(excludedAppsKey: excludedAppsKey)
-            else { return }
-            self.pendingWarmPid = nil
-            warmTask?.cancel()
-            // Taken here, on the main queue, before the task starts.
-            let snapshot = WindowEnumerator.snapshot()
-            // Detached: this closure runs on the main queue, so a plain Task
-            // would inherit the main actor, and the alpha check, the Stage
-            // Manager strip rectification and the downscaled copy of every
-            // window below would run on the main thread after each activation.
-            // The listing itself stays on the warm enumeration queue.
-            warmTask = Task.detached(priority: .utility) { [weak self] in
-                guard let self else { return }
-                let items = await withCheckedContinuation { continuation in
-                    Self.warmEnumerationQueue.async {
-                        continuation.resume(returning: WindowEnumerator.listWindows(for: pid, snapshot: snapshot))
-                    }
-                }
-                guard !items.isEmpty, !Task.isCancelled else { return }
-                for item in items {
-                    guard !Task.isCancelled, let id = item.previewWindowID else { continue }
-                    let captureIsPaused = await MainActor.run { Self.captureIsPaused(excludedAppsKey: excludedAppsKey) }
-                    guard !captureIsPaused else { return }
-                    let capturedImage = await Self.captureViaWindowServer(id, waitingForOtherCaptures: false)
-                    guard !Task.isCancelled else { return }
-                    guard let image = capturedImage else { continue }
-                    if let grid = SwitcherSupport.alphaGrid(of: image),
-                       SwitcherSupport.captureLooksTransformed(alphaGrid: grid) {
-                        let needsPreview = await MainActor.run { !Task.isCancelled && self.cache[id] == nil }
-                        guard needsPreview else { continue }
-                        if let rectified = Self.rectifiedStripCapture(image) {
-                            let copy = Self.bitmapCopy(rectified)
-                            await MainActor.run {
-                                guard !Task.isCancelled, self.cache[id] == nil else { return }
-                                self.store(copy, for: id)
-                            }
-                        }
-                        continue
-                    }
-                    // Same clipped-capture guard as the refresh path, without a
-                    // fallback: warming only ever adds good thumbnails, so a
-                    // sliced one is dropped rather than cached.
-                    if !item.isMinimized,
-                       !SwitcherSupport.captureCoversWindow(imageWidth: image.width,
-                                                            imageHeight: image.height,
-                                                            windowSize: item.frame.size) {
-                        continue
-                    }
-                    let scaled = Self.bitmapCopy(image, maxPixelSize: Self.defaultMaxPixelSize)
-                    await MainActor.run {
-                        guard !Task.isCancelled else { return }
-                        self.store(scaled, for: id)
-                    }
-                }
-                await MainActor.run { self.pruneCache(keeping: []) }
-            }
-        }
-    }
-
-    /// Apps still become active with the displays off, as when a script
-    /// launches one, so the switcher asks before capturing.
+    /// A visible preview still must not capture a locked or sleeping display.
     private static func screenIsInView() -> Bool {
         SwitcherSupport.screenIsInView(session: CGSessionCopyCurrentDictionary() as? [String: Any],
                                        displaysAsleep: CGDisplayIsAsleep(CGMainDisplayID()) != 0)

@@ -249,18 +249,16 @@ final class AppSwitcher: ObservableObject {
             // the first ⌘Tab.
             let panel = ensurePanel()
             panel.contentViewController?.view.layoutSubtreeIfNeeded()
-            if !capturesPreviews {
-                WindowPreviewProvider.shared.stopWarming()
-            } else {
-                WindowPreviewProvider.shared.startWarming()
-            }
+            // Preparing UI is safe here; capturing windows waits until the
+            // user actually opens a preview session.
+            if !capturesPreviews { WindowPreviewProvider.shared.cancel() }
         } else {
             secureInputWatch.stop()
             restoreNativeHotkeys()
             stopObservingKeyboardLayout()
             stopObservingWake()
             removeTap()
-            WindowPreviewProvider.shared.stopWarming()
+            WindowPreviewProvider.shared.cancel()
         }
     }
 

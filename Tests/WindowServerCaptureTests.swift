@@ -249,9 +249,9 @@ enum WindowServerCaptureContract {
                                     encoding: .utf8)) ?? ""
         suite.expect(provider.contains("WindowServerCaptureQueue(\n        checkPermission: WindowServerCaptureQueue.screenRecordingCheck ?? {})"),
                      "the shared capture queue asks tccd before its turns")
-        suite.expect(provider.components(separatedBy: "Self.screenIsInView(),").count == 4
+        suite.expect(provider.components(separatedBy: "Self.screenIsInView(),").count == 2
                      && provider.contains("displaysAsleep: CGDisplayIsAsleep(CGMainDisplayID()) != 0)"),
-                     "refreshes and warming capture only while the screen is in view")
+                     "on-demand refreshes capture only while the screen is in view")
         let onConsole = kCGSessionOnConsoleKey as String
         suite.expect(SwitcherSupport.screenIsInView(session: [onConsole: true], displaysAsleep: false)
                      && SwitcherSupport.screenIsInView(session: nil, displaysAsleep: false),
