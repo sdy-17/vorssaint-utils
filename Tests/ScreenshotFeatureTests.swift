@@ -1563,13 +1563,23 @@ enum ScreenshotFeatureTests {
                 .components(separatedBy: "\n    }").first ?? ""
         }
         let retireBody = selectionMethod("private func retirePanels()")
-        let retireSteps = ["$0.ignoresMouseEvents = true", "CATransaction.flush()", "$0.orderOut(nil)"]
+        let retireSteps = ["$0.ignoresMouseEvents = true", "CATransaction.flush()",
+                           "panel.orderOut(nil)", "panel.close()", "panel.contentView = nil"]
             .compactMap { retireBody.range(of: $0)?.lowerBound }
-        suite.expect(retireSteps.count == 3 && retireSteps == retireSteps.sorted()
+        suite.expect(retireSteps.count == 5 && retireSteps == retireSteps.sorted()
                 && selectionCode.components(separatedBy: "orderOut(").count == 2
                 && selectionMethod("private func captureLive(").contains("retirePanels()")
                 && selectionMethod("private func finish(").contains("retirePanels()"),
-               "a capture surface leaving the screen stops taking the mouse before its fade")
+               "a capture surface stops taking input, hides, closes and releases frozen content in order")
+        let standardGuide = selectionMethod("private var standardGuide: some View")
+        let escapeGuide = selectionMethod("private var escapeHint: some View")
+        suite.expect(standardGuide.contains("Button(action: cancel)")
+                && !standardGuide.contains("allowsHitTesting(false)")
+                && escapeGuide.contains("Button(action: cancel)")
+                && overlayViewBody.contains("host.passesThrough = false")
+                && overlayViewBody.contains("host.acceptsFirstClick = true")
+                && overlayViewBody.components(separatedBy: "controller?.cancel()").count == 3,
+               "both guides expose a real cancel action and preserve it across guide refresh")
         // Both editors state a size the same way. The recorder wrote
         // "1960x1274" beside a screenshot editor that already read
         // "2940 \u{00D7} 1912 px", and the letter x is the tell.

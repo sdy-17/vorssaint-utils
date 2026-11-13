@@ -50,7 +50,7 @@ final class ScreenshotSelectionController {
         weak var panel: NSPanel?
         weak var preparedEditor: ScreenshotEditorController?
         private(set) var isClaimed = false
-        private let prepare: () -> Void
+        private var prepare: (() -> Void)?
 
         init(panel: NSPanel, prepare: @escaping () -> Void) {
             self.panel = panel
@@ -60,8 +60,16 @@ final class ScreenshotSelectionController {
         func claim() -> NSPanel? {
             guard !isClaimed, let panel else { return nil }
             isClaimed = true
-            prepare()
+            let prepare = self.prepare
+            self.prepare = nil
+            prepare?()
             return panel
+        }
+
+        func invalidate() {
+            panel = nil
+            preparedEditor = nil
+            prepare = nil
         }
     }
 
@@ -198,7 +206,9 @@ final class ScreenshotSelectionController {
     /// True while a session owns the screen. Two surfaces at once would stack
     /// dim over dim and split the keyboard between them, so whichever feature
     /// asks second is turned away.
-    private(set) static var isSessionOnScreen = false
+    static var isSessionOnScreen: Bool {
+        activeSession != nil || editingCursorOwners > 0
+    }
     private static weak var activeSession: ScreenshotSelectionController?
 
     /// Step mode needs the physical wheel event immediately. Fast mode keeps
@@ -263,10 +273,21 @@ final class ScreenshotSelectionController {
         }
     }
 
-    func begin(completion: @escaping (Outcome) -> Void) {
-        Self.isSessionOnScreen = true
+    private func claimSession(completion: @escaping (Outcome) -> Void) -> Bool {
+        // Entry-point guards are not enough: direct callers and delayed work
+        // must not replace the owner of a selection or in-place editor.
+        guard !finished, self.completion == nil else { return false }
+        guard !Self.isSessionOnScreen else {
+            completion(.cancelled)
+            return false
+        }
         Self.activeSession = self
         self.completion = completion
+        return true
+    }
+
+    func begin(completion: @escaping (Outcome) -> Void) {
+        guard claimSession(completion: completion) else { return }
         screenCaptureOptions?.onSelectionChange = { [weak self] in
             self?.screenCaptureToolDidChange()
         }
@@ -897,19 +918,19 @@ final class ScreenshotSelectionController {
         guard !panels.isEmpty else { return }
         panels.forEach { $0.ignoresMouseEvents = true }
         CATransaction.flush()
-        panels.forEach { $0.orderOut(nil) }
+        panels.forEach { panel in
+            panel.orderOut(nil)
+            panel.close()
+            panel.contentView = nil
+        }
     }
 
     deinit {
         discardPreparedEditors()
-        // A session that goes away without ending would otherwise leave the
-        // screen marked as taken and every capture feature dead until the app
-        // is restarted. The wrong flag is always the one that lets a capture
-        // start, never the one that blocks it.
-        if !finished {
-            Self.isSessionOnScreen = false
-            if Self.activeSession === self { Self.activeSession = nil }
-        }
+        // activeSession is weak, so deallocation cannot leave a stale capture
+        // lock. Retire any panels even if the caller never cancelled explicitly.
+        retirePanels()
+        Self.refreshBackgroundCursor()
     }
 
     private func finish(_ outcome: Outcome) {
@@ -930,8 +951,14 @@ final class ScreenshotSelectionController {
             outcome = .captured(capture)
         }
         finished = true
-        Self.isSessionOnScreen = false
-        if Self.activeSession === self { Self.activeSession = nil }
+        // Hold selection ownership through the synchronous editor handoff and
+        // retirement; an adopted editor retains its own surface ownership.
+        defer {
+            if Self.activeSession === self {
+                Self.activeSession = nil
+            }
+            Self.refreshBackgroundCursor()
+        }
         screenCaptureOptions?.onSelectionChange = nil
         if let keyMonitor {
             NSEvent.removeMonitor(keyMonitor)
@@ -955,6 +982,7 @@ final class ScreenshotSelectionController {
             completion?(outcome)
             discardPreparedEditors()
             panels.removeAll { surface.isClaimed && $0 === surface.panel }
+            if !surface.isClaimed { surface.invalidate() }
             retirePanels()
             panels.removeAll()
         } else {
@@ -1221,8 +1249,10 @@ private final class ScreenshotOverlayView: NSView {
             requiresDraggedRegion: controller.requiresDraggedRegion,
             scrollingCaptureEnabled: controller.scrollingCaptureEnabled,
             loupeEnabled: controller.loupeEnabled,
-            screenCaptureOptions: screenCaptureOptions))
-        host.passesThrough = screenCaptureOptions == nil
+            screenCaptureOptions: screenCaptureOptions,
+            cancel: { [weak controller] in controller?.cancel() }))
+        host.passesThrough = false
+        host.acceptsFirstClick = true
         guideHost = host
         let hoverRelay = FullScreenControlHoverRelay()
         let fullScreen = PassThroughHostingView(interactiveRootView: FullScreenCaptureButton(
@@ -1339,7 +1369,8 @@ private final class ScreenshotOverlayView: NSView {
             requiresDraggedRegion: controller?.requiresDraggedRegion ?? false,
             scrollingCaptureEnabled: controller?.scrollingCaptureEnabled ?? false,
             loupeEnabled: controller?.loupeEnabled ?? false,
-            screenCaptureOptions: screenCaptureOptions)
+            screenCaptureOptions: screenCaptureOptions,
+            cancel: { [weak controller] in controller?.cancel() })
     }
 
     func captureToolDidChange() {
@@ -2009,6 +2040,7 @@ private struct CaptureGuideView: View {
     let scrollingCaptureEnabled: Bool
     let loupeEnabled: Bool
     let screenCaptureOptions: ScreenCaptureSelectionOptions?
+    let cancel: () -> Void
 
     var body: some View {
         if let screenCaptureOptions {
@@ -2017,7 +2049,8 @@ private struct CaptureGuideView: View {
                                        offersScrollingCapture: offersScrollingCapture,
                                        offersRepeatLastRegion: offersRepeatLastRegion,
                                        scrollingCaptureEnabled: scrollingCaptureEnabled,
-                                       loupeEnabled: loupeEnabled)
+                                       loupeEnabled: loupeEnabled,
+                                       cancel: cancel)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(true)
         } else {
@@ -2059,7 +2092,11 @@ private struct CaptureGuideView: View {
                 if offersRepeatLastRegion {
                     CaptureKeyHint(key: "R", icon: "rectangle.dashed")
                 }
-                CaptureKeyHint(key: "esc", icon: "xmark")
+                Button(action: cancel) {
+                    CaptureKeyHint(key: "esc", icon: "xmark")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(strings.cancel)
             }
         }
         .padding(.horizontal, 14)
@@ -2072,7 +2109,6 @@ private struct CaptureGuideView: View {
                 .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.22), radius: 18, y: 7)
-        .allowsHitTesting(false)
     }
 
     private var title: String {
@@ -2103,6 +2139,7 @@ private struct UnifiedCaptureGuideContent: View {
     let offersRepeatLastRegion: Bool
     let scrollingCaptureEnabled: Bool
     let loupeEnabled: Bool
+    let cancel: () -> Void
     @State private var hoveredTool: ScreenCaptureTool?
 
     var body: some View {
@@ -2162,15 +2199,20 @@ private struct UnifiedCaptureGuideContent: View {
     }
 
     private var escapeHint: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "xmark")
-                .font(.system(size: 10, weight: .bold))
-            Text("esc")
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
+        Button(action: cancel) {
+            HStack(spacing: 5) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                Text("esc")
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+            }
+            .padding(.horizontal, 10)
+            .frame(height: options.showsCaptureMenu ? 56 : 30)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel(strings.cancel)
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 10)
-        .frame(height: options.showsCaptureMenu ? 56 : 30)
         .background(CaptureChromeBackdrop(
             material: .regularMaterial,
             shape: RoundedRectangle(cornerRadius: 14, style: .continuous)))

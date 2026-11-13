@@ -1533,6 +1533,8 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
     }
 
     func show() {
+        // Repeated presentation must not orphan the previously owned panel.
+        guard window == nil else { return }
         if let context = capture.editingContext, !model.showsBackdrop,
            NSScreen.screens.contains(where: { $0.frame == context.screenFrame }) {
             showInPlace(context)
@@ -1639,14 +1641,16 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
         if !panel.isVisible || !panel.isKeyWindow { panel.makeKeyAndOrderFront(nil) }
         displayObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
-            object: nil, queue: .main) { [weak self] _ in
-                guard let self,
+            object: nil, queue: .main) { [weak self, weak panel] _ in
+                guard let self, let panel, self.window === panel,
                       !NSScreen.screens.contains(where: { $0.frame == context.screenFrame }) else { return }
                 // Keep annotations when a monitor is removed or its mode is
                 // changed; release the shield before returning to a window.
-                self.window?.orderOut(nil)
-                self.window?.delegate = nil
-                self.window?.close()
+                panel.ignoresMouseEvents = true
+                panel.orderOut(nil)
+                panel.delegate = nil
+                panel.close()
+                panel.contentView = nil
                 self.window = nil
                 self.removeEditorMonitors()
                 self.show()
@@ -2071,10 +2075,17 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        removeEditorMonitors()
-        window?.delegate = nil
-        window?.contentView = nil
+        // A queued close from an earlier surface must never tear down a newer
+        // editor, and duplicate delegate notifications are harmless. Hide the
+        // shield before releasing the capture guard or its frozen content.
+        guard let closingWindow = notification.object as? NSWindow,
+              window === closingWindow else { return }
+        closingWindow.ignoresMouseEvents = true
+        closingWindow.orderOut(nil)
+        closingWindow.delegate = nil
+        closingWindow.contentView = nil
         window = nil
+        removeEditorMonitors()
         if retainsActivation {
             WindowActivationPolicy.release()
             retainsActivation = false
