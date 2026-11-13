@@ -275,6 +275,12 @@ enum NotchMirrorContract {
         suite.expect(service.countdownOpenings == 1 && service.opened == opened,
                      "clicking a copy of an event countdown opens on its event")
 
+        service.compactActivity = .todo
+        service.mirrors[1]?.host.activate?()
+        suite.expect(service.todoOpenings == 1 && service.opened == opened && service.expanded,
+                     "clicking a todo copy expands its inline page instead of the generic island")
+        service.compactActivity = nil
+
         // Unplugging a display closes its copy; leaving the choice closes them all.
         service.displayID = 1
         service.syncMirrors()

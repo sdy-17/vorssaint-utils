@@ -1201,6 +1201,7 @@ extension AppFeature {
         case .notch: return FeatureStrings.notch(language).title
         case .radialMenu: return FeatureStrings.radialMenu(language).pageTitle
         case .scratchpad: return FeatureStrings.scratchpad(language).pageTitle
+        case .todo: return FeatureStrings.todo(language).title
         case .commandBar: return FeatureStrings.commandBar(language).pageTitle
         case .cleaningMode: return s.cleaningMenuItem
         case .mediaTools: return s.mediaName
@@ -1287,6 +1288,7 @@ extension AppFeature {
         case .notch: return FeatureStrings.notch(L10n.shared.language).description
         case .radialMenu: return FeatureStrings.radialMenu(L10n.shared.language).hubDescription
         case .scratchpad: return FeatureStrings.scratchpad(L10n.shared.language).hubDescription
+        case .todo: return FeatureStrings.todo(L10n.shared.language).caption
         case .commandBar: return FeatureStrings.commandBar(L10n.shared.language).hubDescription
         case .cleaningMode: return hub.descCleaningMode
         case .mediaTools: return hub.descMediaTools

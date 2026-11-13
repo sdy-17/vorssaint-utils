@@ -540,6 +540,14 @@ enum NotchPresentationRefreshContract {
         countdown.windowHost?.activate?()
         suite.expect(countdown.countdownOpenings == 1 && !countdown.expanded,
                      "the open island's close button still closes it while an event counts down")
+        let todo = Service()
+        todo.expanded = false
+        todo.compactActivityIsVisible = true
+        todo.compactActivity = .todo
+        todo.refreshPresentation(animated: false)
+        todo.windowHost?.activate?()
+        suite.expect(todo.todoOpenings == 1 && todo.expanded,
+                     "clicking the todo camera expands its inline page rather than an unrelated island page")
         musicStripChecks(suite)
         let fullscreenSimulated = Service()
         fullscreenSimulated.expanded = false

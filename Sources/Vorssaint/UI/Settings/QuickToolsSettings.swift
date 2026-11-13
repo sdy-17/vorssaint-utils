@@ -13,6 +13,7 @@ struct QuickToolsSettings: View {
     @ObservedObject private var launcher = QuickLauncherService.shared
     @ObservedObject private var cameraPreview = CameraPreviewService.shared
     @ObservedObject private var scratchpad = ScratchpadService.shared
+    @ObservedObject private var todo = TodoService.shared
     @ObservedObject private var brightness = BrightnessService.shared
     @AppStorage(DefaultsKey.quickLauncherShortcutEnabled) private var launcherShortcutEnabled = true
     @AppStorage(DefaultsKey.micMuteShortcutEnabled) private var micShortcutEnabled = false
@@ -20,6 +21,8 @@ struct QuickToolsSettings: View {
     @AppStorage(DefaultsKey.quitAppsExceptFrontShortcutEnabled) private var quitOthersShortcutEnabled = false
     @AppStorage(DefaultsKey.cameraPreviewShortcutEnabled) private var cameraShortcutEnabled = false
     @AppStorage(DefaultsKey.scratchpadShortcutEnabled) private var scratchpadShortcutEnabled = false
+    @AppStorage(DefaultsKey.todoShortcutEnabled) private var todoShortcutEnabled = true
+    @AppStorage(DefaultsKey.todoAutoArchiveDays) private var todoAutoArchiveDays = 0
     @AppStorage(DefaultsKey.scratchpadRetention) private var scratchpadRetention = ScratchpadRetention.never.rawValue
     @AppStorage(DefaultsKey.scratchpadCloseOnClickOutside) private var scratchpadCloseOnClickOutside = true
     @AppStorage(DefaultsKey.scratchpadBackgroundOpacity) private var scratchpadBackgroundOpacity = 0.0
@@ -238,6 +241,44 @@ struct QuickToolsSettings: View {
                     Text(FeatureStrings.wallpaper(l10n.language).pageTitle)
                 }
                 .settingsFormSectionAnchor(.wallpaper)
+            }
+
+            if AppFeature.todo.isAvailable {
+                Section {
+                    Button { TodoService.shared.open() } label: {
+                        Label(FeatureStrings.todo(l10n.language).open, systemImage: "checklist")
+                    }
+                    Text(FeatureStrings.todo(l10n.language).caption)
+                        .font(.caption).foregroundStyle(.secondary)
+                    LabeledContent(FeatureStrings.todo(l10n.language).archiveAfterDays) {
+                        TextField(FeatureStrings.todo(l10n.language).days, value: $todoAutoArchiveDays, format: .number)
+                            .multilineTextAlignment(.trailing).frame(width: 65)
+                        Text(FeatureStrings.todo(l10n.language).days)
+                    }
+                    .onChange(of: todoAutoArchiveDays) { _, days in
+                        let normalized = min(3650, max(0, days))
+                        if days != normalized { todoAutoArchiveDays = normalized }
+                        TodoService.shared.syncWithPreferences()
+                    }
+                    Text(FeatureStrings.todo(l10n.language).archiveNever)
+                        .font(.caption).foregroundStyle(.secondary)
+                    Toggle(l10n.s.quickToolShortcutToggle, isOn: $todoShortcutEnabled)
+                        .onChange(of: todoShortcutEnabled) { _, _ in
+                            TodoService.shared.syncWithPreferences()
+                        }
+                    ShortcutPreferenceRow(role: .todo,
+                                          isEnabled: todoShortcutEnabled) {
+                        TodoService.shared.syncWithPreferences()
+                    }
+                    if todoShortcutEnabled, todo.shortcutRegistrationFailed {
+                        Text(l10n.s.shortcutUnavailable)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                } header: {
+                    Text(FeatureStrings.todo(l10n.language).title)
+                }
+                .settingsFormSectionAnchor(.todo)
             }
 
             if AppFeature.scratchpad.isAvailable {

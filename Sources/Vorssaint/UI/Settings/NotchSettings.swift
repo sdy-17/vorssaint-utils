@@ -545,6 +545,8 @@ struct NotchSettings: View {
         case .watch:
             NotchWatchSettingsControls()
                 .toggleStyle(TrailingSwitchToggleStyle())
+        case .todo:
+            Text(FeatureStrings.todo(l10n.language).caption).font(.callout).foregroundStyle(.secondary)
         case .mixer, .system, .tools:
             EmptyView()
         }
@@ -884,6 +886,7 @@ struct NotchSettings: View {
         case .scratchpad: return .scratchpad
         case .agents: return .notchAgents
         case .watch: return .notchWatch
+        case .todo: return .todo
         }
     }
 

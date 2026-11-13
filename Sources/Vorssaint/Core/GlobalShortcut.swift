@@ -237,6 +237,10 @@ struct GlobalShortcut: Equatable, Hashable {
     // same free control-option-command layer.
     static let snippetLibraryDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_L),
                                                       modifiers: [.control, .option, .command])
+    // Y for to-do, on the same free control-option-command layer (T is the
+    // screen OCR's key there).
+    static let todoDefault = GlobalShortcut(keyCode: Int64(kVK_ANSI_Y),
+                                            modifiers: [.control, .option, .command])
     // Option-Space, the combination mature launchers settled on: one thumb
     // and one finger, mirroring the system search's Command-Space without
     // fighting it for the key. Registered as a hotkey it never types the
@@ -736,6 +740,7 @@ enum GlobalShortcutRole: CaseIterable, Identifiable {
     case keyboardBrightnessDecrease
     case keyboardBrightnessIncrease
     case pointerNextDisplay
+    case todo
     case notch
 
     var id: String { storageKey }
@@ -775,6 +780,7 @@ enum GlobalShortcutRole: CaseIterable, Identifiable {
         case .keyboardBrightnessIncrease: return DefaultsKey.keyboardBrightnessIncreaseShortcut
         case .pointerNextDisplay: return DefaultsKey.pointerDisplayShortcut
         case .notch: return DefaultsKey.notchShortcut
+        case .todo: return DefaultsKey.todoShortcut
         }
     }
 
@@ -813,6 +819,7 @@ enum GlobalShortcutRole: CaseIterable, Identifiable {
         case .keyboardBrightnessIncrease: return .keyboardBrightnessIncreaseDefault
         case .pointerNextDisplay: return .pointerNextDisplayDefault
         case .notch: return .notchDefault
+        case .todo: return .todoDefault
         }
     }
 
@@ -883,6 +890,7 @@ enum GlobalShortcutRole: CaseIterable, Identifiable {
             return FeatureStrings.brightness(L10n.shared.language).keyboardBrightnessIncrease
         case .pointerNextDisplay: return PointerDisplayStrings.localized(L10n.shared.language).title
         case .notch: return FeatureStrings.notch(L10n.shared.language).title
+        case .todo: return FeatureStrings.todo(L10n.shared.language).title
         }
     }
 
@@ -945,6 +953,7 @@ enum GlobalShortcutRole: CaseIterable, Identifiable {
             return [DefaultsKey.keyboardBrightnessShortcutsEnabled]
         case .pointerNextDisplay: return [DefaultsKey.pointerDisplayEnabled]
         case .notch: return [DefaultsKey.notchEnabled, DefaultsKey.notchShortcutEnabled]
+        case .todo: return [DefaultsKey.todoShortcutEnabled]
         }
     }
 
@@ -978,6 +987,7 @@ enum GlobalShortcutRole: CaseIterable, Identifiable {
         case .keyboardBrightnessDecrease, .keyboardBrightnessIncrease: return .brightness
         case .pointerNextDisplay: return .windowLayout
         case .notch: return .notch
+        case .todo: return .todo
         }
     }
 

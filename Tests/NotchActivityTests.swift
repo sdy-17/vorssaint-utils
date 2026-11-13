@@ -18,10 +18,66 @@ enum NotchActivityTests {
         compactMarginContracts(suite)
         compactDownloadContracts(suite)
         keepAwakeContracts(suite)
+        todoContracts(suite)
         accessoryContracts(suite)
         NotchAccessoryConnectionTests.run(suite)
         PeripheralBatteryLifecycleTests.run(suite)
         gateContracts(suite)
+    }
+
+    private static func todoContracts(_ suite: TestSuite) {
+        let done = TodoItem(title: "Done", isCompleted: true)
+        let first = TodoItem(title: "First\nline")
+        let second = TodoItem(title: "Second")
+        let summary = NotchTodoSupport.summary([done, first, second])
+        suite.expect(summary.items == [first, second] && summary.count == 2
+                     && summary.headline == "2 · First line",
+                     "todo summary excludes completed items and preserves pending store order")
+        suite.expect(NotchTodoSupport.summary([]).headline.isEmpty
+                     && NotchTodoSupport.summary([done]).items.isEmpty,
+                     "empty and fully completed lists leave no compact todo reading")
+        var completed = first
+        completed.isCompleted = true
+        suite.expect(NotchTodoSupport.summary([done, completed, second]).headline == "1 · Second",
+                     "completing the leading todo immediately projects the next pending title")
+        suite.expect(NotchSupport.compactActivities(timer: true, watch: true, downloads: true, agents: true,
+                                                     calendar: true, music: true, todo: true, keepAwake: true)
+                     == [.timer, .watch, .downloads, .agents, .calendar, .music, .keepAwake],
+                     "tasks never occupy the compact island even when pending items exist")
+        suite.expect(NotchSupport.compactActivity(timer: false, downloads: false, music: false, todo: true) == nil
+                     && NotchCompactActivity.todo.module == .todo,
+                     "tasks retain their explicit island page without a resting preview")
+
+        let domain = "com.vorssaint.tests.notch-todo"
+        let defaults = UserDefaults(suiteName: domain)!
+        defaults.removePersistentDomain(forName: domain)
+        defer { defaults.removePersistentDomain(forName: domain) }
+        for (key, value) in Defaults.registeredDefaults where key.hasPrefix("notch") { defaults.set(value, forKey: key) }
+        for (key, value) in AppFeature.availabilityDefaults { defaults.set(value, forKey: key) }
+        defaults.set(true, forKey: DefaultsKey.notchEnabled)
+        defaults.set(true, forKey: AppFeature.notch.availabilityKey)
+        defaults.set(true, forKey: AppFeature.todo.availabilityKey)
+        suite.expect(NotchTodoSupport.isEnabled(in: defaults), "new todo section is visible by default")
+        defaults.set("timer,todo", forKey: DefaultsKey.notchHiddenModules)
+        suite.expect(!NotchTodoSupport.isEnabled(in: defaults), "hiding todo also removes its compact activity")
+        defaults.set("", forKey: DefaultsKey.notchHiddenModules)
+        for key in [AppFeature.todo.availabilityKey, AppFeature.notch.availabilityKey, DefaultsKey.notchEnabled] {
+            defaults.set(false, forKey: key)
+            suite.expect(!NotchTodoSupport.isEnabled(in: defaults), "todo island follows gate \(key)")
+            defaults.set(true, forKey: key)
+        }
+        let long = NotchTodoSupport.summary([TodoItem(title: String(repeating: "Very long 待办 ", count: 200))])
+        for room: CGFloat in [0, 48, 100, 200] {
+            let geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1470, height: 956),
+                                         safeAreaTop: 32, cameraWidth: 180, menuBarHeight: 32, compactSideRoom: room)
+            let wing = NotchTodoSupport.stripWing(long, in: geometry)
+            let compact = geometry.compactWatchGeometry(wing: wing)
+            let capsule = NotchCapsuleLayout.watchSurface(reading: long.headline, thumbnail: false, geometry: geometry)
+            suite.expect(wing.isFinite && wing <= NotchWatchSupport.stripWingRange.upperBound
+                         && compact.compactActivityWingWidth <= min(room, NotchWatchSupport.stripWingRange.upperBound)
+                         && capsule.width.isFinite && capsule.width <= geometry.screen.width,
+                         "long todo titles use bounded wings/capsules even with little menu-bar room")
+        }
     }
 
     /// Keep Awake as an activity: off until turned on, gated like the others,

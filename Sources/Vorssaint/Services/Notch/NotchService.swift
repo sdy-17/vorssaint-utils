@@ -152,6 +152,10 @@ final class NotchService: ObservableObject {
     /// Bumped when Command-W asks the Scratchpad page to close its selected
     /// pad, so the confirmation stays in the page as it does in the floating pad.
     @Published private(set) var scratchpadCloseSerial = 0
+    /// The island owns its drafts, not its transient page. Closing or changing
+    /// sections never commits or discards an unfinished task.
+    @Published var todoInput = TodoInputState()
+    @Published private(set) var todoFocusSerial = 0
     /// Find runs against the island's own text view, which the page holds;
     /// the key arrives here, so it is passed on the way Command-W already is.
     @Published private(set) var scratchpadFindSerial = 0
@@ -534,6 +538,11 @@ final class NotchService: ObservableObject {
         return countdown.isShown(at: Date(), leadTime: calendar.countdownLeadTime)
     }
 
+    var todoSummary: NotchTodoSummary { NotchTodoSupport.summary(TodoService.shared.items) }
+
+    // Tasks are private, user-opened content, not an ambient island activity.
+    var hasTodoActivity: Bool { false }
+
     var hasKeepAwakeActivity: Bool {
         NotchKeepAwakeSupport.showsActivity() && KeepAwakeManager.shared.isActive
     }
@@ -546,7 +555,7 @@ final class NotchService: ObservableObject {
     var compactActivities: [NotchCompactActivity] {
         NotchSupport.compactActivities(timer: hasTimerActivity, watch: hasWatchActivity, downloads: hasDownloadActivity,
                                       agents: hasAgentActivity, calendar: hasCalendarActivity,
-                                      music: hasMusicActivity, keepAwake: hasKeepAwakeActivity)
+                                      music: hasMusicActivity, todo: hasTodoActivity, keepAwake: hasKeepAwakeActivity)
     }
 
     var showsCompactActivityPicker: Bool {
@@ -667,6 +676,7 @@ final class NotchService: ObservableObject {
             return geometry.compactDownloadGeometry(wing: NotchDownloadSupport.compactWing(for: name, in: geometry))
         case .agents: return geometry.compactAgentGeometry(wing: agentStripWing(in: geometry))
         case .watch: return geometry.compactWatchGeometry(wing: watchStripWing(in: geometry))
+        case .todo: return geometry.compactWatchGeometry(wing: NotchTodoSupport.stripWing(todoSummary, in: geometry))
         case .calendar:
             return geometry.compactCalendarGeometry(wing: calendarStripWing(for: companion, in: geometry),
                                                     paired: companion != nil)
@@ -1084,6 +1094,8 @@ final class NotchService: ObservableObject {
             return layout.calendarSurface(title: layout.calendarTitle(countdown, language: language),
                                           time: NotchCalendarSupport.timeText(countdown, locale: language.formattingLocale()),
                                           geometry: geometry, calendarLeadTime: NotchCalendarService.shared.countdownLeadTime)
+        case .todo:
+            return layout.watchSurface(reading: todoSummary.headline, thumbnail: false, geometry: geometry)
         case .watch:
             let watch = NotchWatchService.shared
             return layout.watchSurface(reading: watch.headline, thumbnail: watch.showsThumbnail, geometry: geometry)
@@ -1404,6 +1416,29 @@ final class NotchService: ObservableObject {
         if opensActivity { open(module) } else { open() }
     }
 
+    /// Every island entry point opens the inline editor, even if the general
+    /// reopening preference points elsewhere. The floating window is explicit.
+    func openTodo() { _ = showTodo() }
+
+    @discardableResult
+    func showTodo() -> Bool {
+        guard acceptsUserInteraction, NotchTodoSupport.isEnabled(),
+              captureControls == nil, !heldDrag else { return false }
+        open(.todo)
+        guard expanded, selected == .todo, !showingSections, !showingAppPanel else { return false }
+        todoFocusSerial += 1
+        return true
+    }
+
+    /// An explicit escape hatch; never the default summary/camera action.
+    func openTodoPanel() {
+        guard acceptsUserInteraction, NotchTodoSupport.isEnabled() else { return }
+        perform {
+            guard NotchTodoSupport.isEnabled() else { return }
+            TodoService.shared.show()
+        }
+    }
+
     /// Opens the Calendar page scrolled to the countdown's event.
     func openCountdownEvent() {
         let calendar = NotchCalendarService.shared
@@ -1529,6 +1564,16 @@ final class NotchService: ObservableObject {
               })
         else { return }
         next.makeKey()
+    }
+
+    /// The todo page demands typing, so a panel that lost key status between
+    /// opening (for example via the global shortcut racing another window) is
+    /// reclaimed here instead of silently dropping every keystroke.
+    func ensurePanelKeyForTyping() {
+        guard expanded, acceptsUserInteraction, captureControls == nil, !heldDrag,
+              let panel, !panel.isKeyWindow else { return }
+        panel.acceptsKeyFocus = true
+        panel.makeKey()
     }
 
     func setMusicDetailsVisible(_ visible: Bool) {
@@ -1839,6 +1884,22 @@ final class NotchService: ObservableObject {
                                                                    flow: .rows(columns: geometry.sectionColumns),
                                                                    direction: direction)]
         return true
+    }
+
+    /// Todo shares the island's local key/IME boundary, never a global monitor.
+    private func handleTodoKey(_ event: NSEvent) -> Bool {
+        guard selected == .todo, !showingAppPanel, !showingSections, selectedMetric == nil else { return false }
+        let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        if event.keyCode == 53, modifiers.isEmpty, todoInput.editingID != nil {
+            todoInput.beginAdding()
+            todoFocusSerial += 1
+            return true
+        }
+        if modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "w" {
+            collapse()
+            return true
+        }
+        return false
     }
 
     /// The floating pad's tab shortcuts work on its page too. With one pad
@@ -2753,6 +2814,9 @@ final class NotchService: ObservableObject {
                 if self.captureControls != nil { self.expandCaptureControls() }
                 // The capsule's button covers its music bars too, which play or pause there.
                 else if self.geometry.floats, self.musicStripShowsControl { self.toggleMusicStripSong() }
+                else if !self.expanded, self.compactActivity == .todo {
+                    self.openTodo()
+                }
                 else if !self.expanded, self.compactActivity == .calendar {
                     self.openCountdownEvent()
                 } else { self.toggle() }
@@ -3306,7 +3370,8 @@ final class NotchService: ObservableObject {
             guard let self, self.running, !self.suspended, self.canFollowPointer,
                   let screen = NSScreen.screens.first(where: { $0.notchDisplayID == id }) else { return }
             self.move(to: screen)
-            if self.compactActivity == .calendar { self.openCountdownEvent() } else { self.open() }
+            if self.compactActivity == .todo { self.openTodo() }
+            else if self.compactActivity == .calendar { self.openCountdownEvent() } else { self.open() }
         }
     }
 
@@ -3366,7 +3431,8 @@ final class NotchService: ObservableObject {
             guard let pressed = pressedArea,
                   NotchSupport.screenEdgeArea(pressed, contains: point) || NotchSupport.screenEdgeArea(area, contains: point),
                   windowHost?.containsDestination(point) == true else { return }
-            if compactActivity == .calendar { openCountdownEvent() } else { open() }
+            if compactActivity == .todo { openTodo() }
+            else if compactActivity == .calendar { openCountdownEvent() } else { open() }
         case .leftMouseDragged:
             // A press at the screen's edge reports a drag at once, often without
             // moving. Only a drag that leaves the island cancels the click.
@@ -3894,6 +3960,7 @@ final class NotchService: ObservableObject {
                     return nil
                 }
                 if self.handleSectionKey(event) { return nil }
+                if self.handleTodoKey(event) { return nil }
                 if self.handleScratchpadKey(event) { return nil }
                 if self.handleClipboardPasteKey(event) { return nil }
             }
@@ -4039,6 +4106,8 @@ final class NotchService: ObservableObject {
 
     private func bindEvents() {
         subscriptions.removeAll()
+        // Todos are private, explicit-open content. Their page observes the
+        // store directly; no ambient subscription, preload or activity refresh.
         if modules.contains(.timer) {
             NotchTimerService.shared.$session.removeDuplicates().receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in

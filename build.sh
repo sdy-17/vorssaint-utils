@@ -254,12 +254,16 @@ if (( TEST )); then
         Sources/Vorssaint/Core/QuitProtectionSupport.swift
         Sources/Vorssaint/Core/QuitProtectionStrings.swift
         Sources/Vorssaint/Core/Defaults.swift
+        Sources/Vorssaint/Core/TodoStrings.swift
+        Sources/Vorssaint/Services/Todo/TodoStore.swift
+        Sources/Vorssaint/Services/Todo/TodoModel.swift
         Sources/Vorssaint/Core/NotchStrings.swift
         Sources/Vorssaint/Core/NotchTourStrings.swift
         Sources/Vorssaint/Core/NotchEditorStrings.swift
         Sources/Vorssaint/UI/Settings/NotchSettingsTabRow.swift
         Sources/Vorssaint/Core/NotchActivityStrings.swift
         Sources/Vorssaint/Services/Notch/NotchTimerSupport.swift
+        Sources/Vorssaint/Services/Notch/NotchTodoSupport.swift
         Sources/Vorssaint/Services/Notch/NotchAppFullscreen.swift
         Sources/Vorssaint/Services/Notch/NotchTimerAlert.swift
         Sources/Vorssaint/UI/Notch/NotchIslandAlert.swift

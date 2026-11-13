@@ -42,7 +42,8 @@ enum SettingsBackupSupport {
 
     /// Keys the backup carries: every registered preference, the availability
     /// layer, and the deliberately unregistered selection/layout keys — minus
-    /// state that belongs to one machine or one moment.
+    /// state that belongs to one machine or one moment. Todo filter/visibility
+    /// preferences travel; private task content in todos.json never does.
     static func exportKeys() -> Set<String> {
         var keys = Set(Defaults.registeredDefaults.keys)
         keys.formUnion(AppFeature.availabilityDefaults.keys)

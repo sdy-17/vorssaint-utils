@@ -413,6 +413,7 @@ enum SettingsDirectory {
                                         (.wallpaper,
                                          [FeatureStrings.wallpaper(language).pageTitle]),
                                         (.scratchpad, [FeatureStrings.scratchpad(language).pageTitle]),
+                                        (.todo, [FeatureStrings.todo(language).title, "todo", "to-do", "task", "待办"]),
                                         (.cleaningMode, [s.cleaningMenuItem, s.cleaningKeepScreenVisibleToggle]),
                                        ]),
                 SettingsDirectoryItem(page: .screenshot,

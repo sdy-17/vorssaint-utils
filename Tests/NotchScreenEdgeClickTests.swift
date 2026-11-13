@@ -154,6 +154,15 @@ enum NotchScreenEdgeClickTests {
         service.handleScreenEdgeClick(.leftMouseUp, at: point, isNotchWindow: false)
         suite.expect(service.openings == 1 && service.screenEdgeClickMonitors.isEmpty,
                "clicking the top edge opens a simulated notch exactly once and stops its closed-state monitors")
+        let todo = Service()
+        todo.compactActivity = .todo
+        todo.syncScreenEdgeClicks()
+        let todoEdge = CGPoint(x: todo.geometry.screen.midX, y: todo.geometry.screen.maxY)
+        todo.handleScreenEdgeClick(.leftMouseDown, at: todoEdge, isNotchWindow: false)
+        todo.handleScreenEdgeClick(.leftMouseUp, at: todoEdge, isNotchWindow: false)
+        suite.expect(todo.todoOpenings == 1 && todo.openings == 0 && todo.expanded,
+                     "the todo screen-edge click opens its inline page instead of a generic island")
+        todo.removeScreenEdgeClickMonitors()
         let countdown = Service()
         countdown.compactActivity = .calendar
         countdown.syncScreenEdgeClicks()

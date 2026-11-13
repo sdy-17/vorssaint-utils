@@ -86,6 +86,9 @@ enum NotchKeyMonitorTests {
         var showingAppPanel = false
         var showingSections = false
         var showingCommandBar = false
+        var selectedMetric: Int?
+        var todoInput = TodoInputState()
+        var todoFocusSerial = 0
         var geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1470, height: 956),
                                      safeAreaTop: 32, cameraWidth: 180)
         var fullWidthRow = false
@@ -167,6 +170,34 @@ enum NotchKeyMonitorTests {
             suite.expect(NSEvent.handler?(escape) == nil && actions == [destination.action],
                          "Esc reaches the island from \(destination.name) once composition ends")
         }
+        // The real Todo key handler shares the window and IME boundary above.
+        service.selected = .todo
+        service.showingSections = false
+        service.showingAppPanel = false
+        let todo = TodoItem(title: "edit me")
+        service.todoInput.newTitle = "keep new draft"
+        service.todoInput.beginEditing(todo)
+        let todoField = NSTextView(isFieldEditor: true)
+        todoField.composing = true
+        service.panel?.firstResponder = todoField
+        actions = []
+        suite.expect(NSEvent.handler?(escape) != nil && service.todoInput.editingID == todo.id,
+                     "Todo IME Escape preserves the edit before cancelling composition")
+        todoField.composing = false
+        let foreignEscape = NSEvent(window: Panel(), keyCode: 53)
+        suite.expect(NSEvent.handler?(foreignEscape) != nil && service.todoInput.editingID == todo.id,
+                     "Todo never takes keys or drafts from another window")
+        suite.expect(NSEvent.handler?(escape) == nil && service.todoInput.editingID == nil && actions.isEmpty
+                     && service.todoInput.newTitle == "keep new draft" && service.todoFocusSerial == 1,
+                     "first Todo Escape cancels only its edit and restores its new-task draft")
+        _ = NSEvent.handler?(escape)
+        suite.expect(actions == ["stepBack"], "the next Todo Escape uses normal island navigation")
+        actions = []
+        let commandW = NSEvent(window: service.panel, keyCode: 13, modifierFlags: .command,
+                               charactersIgnoringModifiers: "w")
+        _ = NSEvent.handler?(commandW)
+        suite.expect(actions == ["collapse"] && service.todoInput.newTitle == "keep new draft",
+                     "Todo Command-W closes the island without submitting or clearing the draft")
         // The Command Bar inside the island reads its own keys: Escape steps
         // back through its search, and Command-K is its actions, not the gallery.
         service.selected = .controls

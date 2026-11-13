@@ -658,6 +658,11 @@ enum DefaultsKey {
     static let panelUtilityScreenOCR = "panelUtilityScreenOCR"
     static let panelUtilityCameraPreview = "panelUtilityCameraPreview"
     static let panelUtilityScratchpad = "panelUtilityScratchpad"
+    static let panelUtilityTodo = "panelUtilityTodo"
+    static let todoFilter = "todoFilter" // all | pending | completed | archived; content stays in todos.json
+    static let todoAutoArchiveDays = "todoAutoArchiveDays" // 0 disables; completed tasks only
+    static let todoShortcutEnabled = "todoShortcutEnabled"
+    static let todoShortcut = "todoShortcut"            // GlobalShortcut storage value
     static let clipboardHistoryShortcutEnabled = "clipboardHistoryShortcutEnabled"
     static let clipboardHistoryShortcut = "clipboardHistoryShortcut"
     // Mode chooser visibility for dedicated capture shortcuts.
@@ -1867,6 +1872,11 @@ enum Defaults {
         DefaultsKey.panelUtilityScreenOCR: true,
         DefaultsKey.panelUtilityCameraPreview: true,
         DefaultsKey.panelUtilityScratchpad: true,
+        DefaultsKey.panelUtilityTodo: true,
+        DefaultsKey.todoFilter: "all",
+        DefaultsKey.todoAutoArchiveDays: 0,
+        DefaultsKey.todoShortcutEnabled: true,
+        DefaultsKey.todoShortcut: GlobalShortcut.todoDefault.storageValue,
         DefaultsKey.clipboardHistoryShortcutEnabled: true,
         DefaultsKey.clipboardHistoryShortcut: GlobalShortcut.clipboardDefault.storageValue,
         DefaultsKey.recorderShortcutEnabled: false,

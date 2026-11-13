@@ -555,7 +555,7 @@ private enum UtilityPanelItem: String, PanelOrderItem, Identifiable {
     // to allCases). Screenshot leads in 3.1.13; existing orders that predate it
     // are migrated once without disturbing the rest of the user's layout.
     case screenshot, quickLauncher, appUpdates, cleaner, homebrew, media, clipboard, windowLayout,
-         uninstaller, cleanURL, cleaning, screenOCR, colorPicker, cameraPreview, scratchpad,
+         uninstaller, cleanURL, cleaning, screenOCR, colorPicker, cameraPreview, scratchpad, todo,
          commandBar, screenRecorder, portManager
 
     var id: String { rawValue }
@@ -580,6 +580,7 @@ private enum UtilityPanelItem: String, PanelOrderItem, Identifiable {
         case .screenRecorder: return .screenRecorder
         case .cameraPreview: return .cameraPreview
         case .scratchpad: return .scratchpad
+        case .todo: return .todo
         case .commandBar: return .commandBar
         case .portManager: return .portManager
         }
@@ -615,6 +616,7 @@ struct UtilitiesSection: View {
     @AppStorage(DefaultsKey.panelUtilityColorPicker) private var showColorPicker = true
     @AppStorage(DefaultsKey.panelUtilityCameraPreview) private var showCameraPreview = true
     @AppStorage(DefaultsKey.panelUtilityScratchpad) private var showScratchpad = true
+    @AppStorage(DefaultsKey.panelUtilityTodo) private var showTodo = true
     @AppStorage(DefaultsKey.panelUtilityCommandBar) private var showCommandBar = true
     @AppStorage(DefaultsKey.panelUtilityScreenRecorder) private var showScreenRecorder = true
     @AppStorage(DefaultsKey.panelUtilityPortManager) private var showPortManager = true
@@ -777,6 +779,7 @@ struct UtilitiesSection: View {
         case .colorPicker: return showColorPicker
         case .cameraPreview: return showCameraPreview
         case .scratchpad: return showScratchpad
+        case .todo: return showTodo
         case .commandBar: return showCommandBar
         case .quickLauncher: return showQuickLauncher
         case .screenshot: return showScreenshot
@@ -976,6 +979,19 @@ struct UtilitiesSection: View {
                                         CameraPreviewService.shared.show()
                                     }
                                 })
+        case .todo:
+            UtilityActionButton(title: FeatureStrings.todo(l10n.language).title,
+                                caption: FeatureStrings.todo(l10n.language).caption,
+                                systemImage: "checklist",
+                                isEditing: editing,
+                                showsDragHandle: true,
+                                visibility: $showTodo,
+                                action: {
+                                    appDelegate()?.closePopover()
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                        TodoService.shared.open()
+                                    }
+                                })
         case .scratchpad:
             UtilityActionButton(title: FeatureStrings.scratchpad(l10n.language).pageTitle,
                                 caption: FeatureStrings.scratchpad(l10n.language).panelCaption,
@@ -1100,6 +1116,7 @@ struct UtilitiesSection: View {
         showColorPicker = true
         showCameraPreview = true
         showScratchpad = true
+        showTodo = true
         showQuickLauncher = true
         showCommandBar = true
         showPortManager = true

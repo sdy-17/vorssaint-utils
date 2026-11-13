@@ -1384,8 +1384,10 @@ def main():
                                                 "AppFeature.connectedDevices.isAvailable(in: ReviewDefaults.current)")
     write("NotchMusicVisibility.swift", "import Foundation\nextension NotchMusicVisibilityTests {\n"
           + "final class Service: State {\nfunc resignPanelKey() { panel?.resignKey() }\n"
+          + "var hasTodoActivity = false\nvar todoSummary = NotchTodoSummary(items: [])\n"
           + music_visibility + "}\n}\n")
     write("NotchScreenEdgeClicks.swift", "import AppKit\nextension NotchScreenEdgeClickTests {\nfinal class Service: State {\n"
+          + "var todoOpenings = 0\nfunc openTodo() { todoOpenings += 1; expanded = true }\n"
           + "func open() { openings += 1; expanded = true; syncScreenEdgeClicks() }\n"
           + "".join(declaration(notch, prefix).replace("    private ", "    ", 1) for prefix in [
               "    private var screenEdgeClickArea:", "    private func syncScreenEdgeClicks(",
@@ -1417,6 +1419,7 @@ def main():
           + declaration(notch, "    private func cancelRelocation()").replace("private func", "func", 1)
           + "}\n}\n")
     write("NotchMirrors.swift", "import AppKit\nextension NotchMirrorContract {\nfinal class Service: State {\n"
+          + "var todoOpenings = 0\nfunc openTodo() { todoOpenings += 1; expanded = true }\n"
           + "".join(declaration(notch, prefix).replace("    private ", "    ", 1) for prefix in [
               "    private func syncMirrors()", "    private func mirrorSurface(", "    private func mirrorSideRoom(",
               "    private func closeMirrors()", "    private func updateFullscreenDisplays()",
@@ -1443,7 +1446,35 @@ def main():
               .replace("NotchMascotSupport.hidesWhenIdle()", "hidesWhenIdle")
               .replace("CACurrentMediaTime()", "mediaTime()")
           + "}\n}\n")
+    todo_view = "Sources/Vorssaint/UI/Notch/NotchTodoView.swift"
+    todo_window = "Sources/Vorssaint/UI/Todo/TodoView.swift"
+    write("NotchTodo.swift", "import AppKit\n"
+          + declaration(todo_view, "enum NotchTodoFocusTarget:")
+          + declaration(todo_view, "enum NotchTodoScrollMode {")
+          + "extension NotchTodoTests {\nfinal class Route: RouteState {\n"
+          + declaration(notch, "    func showTodo()")
+          + "}\nfinal class Editor: EditorState {\n"
+          + "".join(declaration(todo_view, prefix).replace("private func", "func", 1) for prefix in [
+              "    private func submit()", "    private func beginEdit(", "    private func beginAdd()",
+              "    private func delete(", "    private func toggle(", "    private func archive(",
+              "    private func restore(", "    private func setArchivedMode(", "    private func editingRowLocationChanged(",
+              "    private func rowsHeightChanged()", "    private func queueScroll("])
+          + declaration(todo_view, "    private var visibleItems:").replace("private var", "var", 1)
+          + declaration(todo_view, "    private var focusTarget:").replace("private var", "var", 1)
+          + declaration(todo_view, "    private var orphanedEditingID:").replace("private var", "var", 1)
+          + declaration(todo_view, "    private func requestFocus(").replace("private func", "func", 1)
+              .replace("DispatchQueue.main.async {", "enqueueFocus { [self] in")
+          + "}\nfinal class WindowEditor: WindowEditorState {\n"
+          + "".join(declaration(todo_window, prefix).replace("private var", "var", 1) for prefix in [
+              "    private var editingID:", "    private var filter:", "    private var visibleItems:",
+              "    private var orphanedEditingID:"])
+          + "".join(declaration(todo_window, prefix).replace("private func", "func", 1) for prefix in [
+              "    private func beginEdit(", "    private func cancelEdit()", "    private func saveEdit("])
+          + declaration(todo_window, "    private func editingRowLocationChanged(").replace("private func", "func", 1)
+              .replace("DispatchQueue.main.async {", "enqueueFocus { [self] in")
+          + "}\n}\n")
     write("NotchKeyMonitor.swift", "import Foundation\nextension NotchKeyMonitorTests {\nfinal class Service: State {\n"
+          + declaration(notch, "    private func handleTodoKey(").replace("private func", "func", 1)
           + declaration(notch, "    private func installEventMonitors()").replace("private func", "func", 1)
           + declaration(notch, "    private func clickedElsewhere()").replace("private func", "func", 1)
           + "}\n}\n")
@@ -1453,6 +1484,7 @@ def main():
           + "}\n}\n")
     write("NotchPresentationRefresh.swift", "import AppKit\nimport Foundation\nimport Combine\nimport SwiftUI\n"
           + "extension NotchPresentationRefreshContract {\nfinal class Service: State {\n"
+          + "var todoOpenings = 0\nfunc openTodo() { todoOpenings += 1; expanded = true }\n"
           + "func resignPanelKey() { panel?.resignKey() }\n"
           + "func hover(_ entered: Bool) {\nlet wasInside = inside\n"
           + "inside = windowHost?.containsHover(NSEvent.mouseLocation) == true\n"
@@ -1920,7 +1952,14 @@ def main():
     selection = "Sources/Vorssaint/Services/QuickTools/ScreenshotSelectionController.swift"
     write("ScreenshotEditingSurface.swift",
           "import Foundation\nextension ScreenshotEditingSurfaceTests {\n"
-          + declaration(selection, "    final class EditingSurface") + "}\n")
+          + declaration(selection, "    final class EditingSurface") + "}\n"
+          + "extension ScreenshotEditingSurfaceTests.Session {\n"
+          + declaration(selection, "    static var isSessionOnScreen:")
+          + "".join(declaration(selection, prefix).replace("private func", "func", 1)
+                    for prefix in ["    private func claimSession(", "    func cancel()",
+                                   "    private func finish(", "    private func retirePanels()"] )
+          + "}\nextension ScreenshotEditingSurfaceTests.ScreenshotEditorController {\n"
+          + declaration(editor, "    func windowWillClose(") + "}\n")
     refresh_methods = [
         "    private func screenCaptureToolDidChange()",
         "    private func adoptCapturePolicy(",

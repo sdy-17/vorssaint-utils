@@ -106,6 +106,22 @@ enum SettingsFeatureTests {
             }, "backup dispatch precedes every startup handler with side effects")
 
         let backupKeys = SettingsBackupSupport.exportKeys()
+        suite.expect(backupKeys.contains(DefaultsKey.todoAutoArchiveDays),
+                     "todo archive timing is a portable preference")
+        for days in [0, 1, 7, 30] {
+            let backup = SettingsBackupSupport.payload(appVersion: "test") { key in
+                key == DefaultsKey.todoAutoArchiveDays ? days : nil
+            }
+            suite.expect(SettingsBackupSupport.sanitizedSettings(from: backup)?[
+                DefaultsKey.todoAutoArchiveDays] as? Int == days,
+                "todo archive timing survives settings backup without task content")
+        }
+        for language in AppLanguage.allCases {
+            let text = FeatureStrings.todo(language)
+            suite.expect([text.archive, text.archived, text.restore, text.archiveAfterDays,
+                          text.archiveNever, text.days].allSatisfy { !$0.isEmpty },
+                         "todo archival labels exist for every language")
+        }
         for reserved in [false, true] {
             let backup = SettingsBackupSupport.payload(appVersion: "test") { key in
                 key == DefaultsKey.windowReserveStageManagerSpace ? reserved : nil

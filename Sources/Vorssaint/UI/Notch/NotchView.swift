@@ -233,6 +233,7 @@ struct NotchView: View {
             switch activity {
             case .timer: NotchCapsuleTimerStrip(service: service, size: size)
             case .watch: NotchCapsuleWatchStrip(service: service, size: size)
+            case .todo: NotchCapsuleTodoStrip(service: service, size: size)
             case .downloads: NotchCapsuleDownloadStrip(service: service, size: size)
             case .agents: NotchCapsuleAgentStrip(service: service, size: size)
             case .calendar: NotchCapsuleCalendarStrip(service: service, size: size)
@@ -247,6 +248,7 @@ struct NotchView: View {
             switch activity {
             case .timer: NotchTimerStrip(service: service, displayGeometry: geometry)
             case .watch: NotchWatchStrip(service: service, displayGeometry: geometry)
+            case .todo: NotchTodoStrip(service: service, displayGeometry: geometry)
             case .downloads: NotchDownloadStrip(service: service, displayGeometry: geometry)
             case .agents: NotchAgentStrip(service: service, displayGeometry: geometry)
             case .calendar: NotchCalendarStrip(service: service, displayGeometry: geometry)
@@ -600,6 +602,7 @@ struct NotchView: View {
             case .scratchpad: NotchScratchpadView(service: service)
             case .agents: NotchAgentsView(size: pageSize)
             case .watch: NotchWatchView(size: pageSize)
+            case .todo: NotchTodoView(service: service, size: pageSize)
             }
         }
     }
@@ -835,6 +838,7 @@ extension NotchModule: PanelOrderItem {
         case .scratchpad: return FeatureStrings.scratchpad(language).pageTitle
         case .agents: return FeatureStrings.notchAgents(language).title
         case .watch: return FeatureStrings.notchWatch(language).title
+        case .todo: return FeatureStrings.todo(language).title
         }
     }
 }
